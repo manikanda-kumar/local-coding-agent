@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import time
 
 from agent_runtime.gateway import CapabilityGateway, GatewayError, to_jsonable
+from agent_runtime.metrics import MetricEvent, MetricsSink, emit_metric
 from agent_runtime.models import ChatMessage, ChatRequest, ToolCall, ToolDefinition
 from agent_runtime.providers.base import Provider
 
@@ -42,18 +44,46 @@ class AgentRunner:
         *,
         max_turns: int = 8,
         max_invocations: int = 4,
+        metrics: MetricsSink | None = None,
     ) -> None:
         if max_turns < 1 or max_invocations < 0:
             raise ValueError("limits must be non-negative and max_turns positive")
         self.provider, self.model, self.gateway = provider, model, gateway
         self.max_turns, self.max_invocations = max_turns, max_invocations
+        self.metrics = metrics
 
     def run(self, prompt: str) -> str:
         messages = [ChatMessage(role="user", content=prompt)]
         invocations = 0
         for _ in range(self.max_turns):
-            response = self.provider.chat(
-                self.model, ChatRequest(tuple(messages), tools=GATEWAY_TOOLS)
+            started = time.monotonic()
+            try:
+                response = self.provider.chat(
+                    self.model, ChatRequest(tuple(messages), tools=GATEWAY_TOOLS)
+                )
+            except Exception:
+                emit_metric(
+                    self.metrics,
+                    MetricEvent(
+                        "model",
+                        "chat",
+                        "failure",
+                        run_id=self.gateway.context.run_id,
+                        duration_ms=(time.monotonic() - started) * 1000,
+                    ),
+                )
+                raise
+            emit_metric(
+                self.metrics,
+                MetricEvent(
+                    "model",
+                    "chat",
+                    "success",
+                    run_id=self.gateway.context.run_id,
+                    duration_ms=(time.monotonic() - started) * 1000,
+                    input_tokens=response.usage.input_tokens,
+                    output_tokens=response.usage.output_tokens,
+                ),
             )
             messages.append(response.to_assistant_message())
             if not response.tool_calls:

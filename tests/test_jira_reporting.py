@@ -153,6 +153,35 @@ def test_failure_stays_report_and_errors_are_sanitized(tmp_path) -> None:
     assert store.get_run("RUN-8").state == RunState.REPORT
 
 
+def test_reconstructed_reporting_service_reconciles_persisted_intent(tmp_path) -> None:
+    store = reporting_store(tmp_path)
+    failing = JiraWriteAdapter(
+        "https://jira.test",
+        JiraAuth("bearer", "secret"),
+        client=httpx.Client(
+            transport=httpx.MockTransport(lambda request: httpx.Response(500, request=request))
+        ),
+    )
+    with pytest.raises(JiraWriteError):
+        JiraReportingService(store, failing).report("RUN-8")
+    assert (
+        store.connection.execute("SELECT status FROM jira_report_outbox").fetchone()[0] == "INTENT"
+    )
+
+    def recovered(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, json={"comments": [], "total": 0})
+        return httpx.Response(201, json={"id": "restart-1"})
+
+    adapter = JiraWriteAdapter(
+        "https://jira.test",
+        JiraAuth("bearer", "secret"),
+        client=httpx.Client(transport=httpx.MockTransport(recovered)),
+    )
+    assert JiraReportingService(store, adapter).resume("RUN-8").comment_id == "restart-1"
+    assert store.get_run("RUN-8").state == RunState.SUCCEEDED
+
+
 def test_transition_is_unavailable_by_default_allowlisted_exact_and_single_use(tmp_path) -> None:
     store, transitions = reporting_store(tmp_path), []
 

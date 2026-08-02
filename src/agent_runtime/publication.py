@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 
 from agent_runtime.durable import RunState, SQLiteRunStore
+from agent_runtime.metrics import MetricEvent, MetricsSink, emit_metric
 from agent_runtime.workspace import WorkspaceManager
 
 
@@ -247,8 +248,10 @@ class PublicationService:
         repository: str,
         base_branch: str,
         target_account: str,
+        metrics: MetricsSink | None = None,
     ) -> None:
         self.store, self.workspaces, self.adapter = store, workspaces, adapter
+        self.metrics = metrics
         self.repository, self.base_branch, self.target_account = (
             repository,
             base_branch,
@@ -334,6 +337,17 @@ class PublicationService:
             )
 
     def publish(self, run_id: str, approval_id: str, *, title: str) -> PublicationResult:
+        try:
+            result = self._publish(run_id, approval_id, title=title)
+        except Exception:
+            emit_metric(
+                self.metrics, MetricEvent("publication", "publish", "failure", run_id=run_id)
+            )
+            raise
+        emit_metric(self.metrics, MetricEvent("publication", "publish", "success", run_id=run_id))
+        return result
+
+    def _publish(self, run_id: str, approval_id: str, *, title: str) -> PublicationResult:
         now = datetime.now(UTC)
         row = self.store.connection.execute(
             "SELECT * FROM publish_approvals WHERE approval_id=? AND run_id=?",
@@ -440,6 +454,17 @@ class PublicationService:
 
     def resume(self, run_id: str) -> PublicationResult:
         """Resume a consumed, persisted intent without consulting a model or issuing a new approval."""
+        try:
+            result = self._resume(run_id)
+        except Exception:
+            emit_metric(
+                self.metrics, MetricEvent("publication", "resume", "failure", run_id=run_id)
+            )
+            raise
+        emit_metric(self.metrics, MetricEvent("publication", "resume", "success", run_id=run_id))
+        return result
+
+    def _resume(self, run_id: str) -> PublicationResult:
         run = self.store.get_run(run_id)
         outbox = self.store.connection.execute(
             "SELECT * FROM publication_outbox WHERE run_id=?", (run_id,)

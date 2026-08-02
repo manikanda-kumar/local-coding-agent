@@ -22,6 +22,7 @@ from agent_runtime.gateway import (
     Effect,
     InvocationContext,
 )
+from agent_runtime.metrics import MetricEvent, MetricsSink, emit_metric
 from agent_runtime.workspace import WorkspaceManager
 
 
@@ -309,8 +310,11 @@ class ImplementationValidationCoordinator:
         store: SQLiteRunStore,
         validation: ValidationService,
         limits: CoordinatorLimits | None = None,
+        *,
+        metrics: MetricsSink | None = None,
     ) -> None:
         self.store, self.validation, self.limits = store, validation, limits or CoordinatorLimits()
+        self.metrics = metrics
 
     def run(self, run_id: str, implement: Callable[[int], tuple[int, int, float]]) -> bool:
         started, turns, tokens, cost = time.monotonic(), 0, 0, 0.0
@@ -328,6 +332,11 @@ class ImplementationValidationCoordinator:
             if last_checkpoint is not None and not last_checkpoint["passed"] and running is None:
                 self.store.transition(run_id, RunState.IMPLEMENT)
         for attempt in range(self.store.next_validation_attempt(run_id), self.limits.attempts + 1):
+            if attempt > 1:
+                emit_metric(
+                    self.metrics,
+                    MetricEvent("retry", "validation_attempt", "started", run_id=run_id),
+                )
             if time.monotonic() - started > self.limits.elapsed_seconds:
                 break
             state = self.store.get_run(run_id).state
@@ -353,7 +362,29 @@ class ImplementationValidationCoordinator:
                 self.store.transition(
                     run_id, RunState.AWAITING_PUBLISH_APPROVAL, {"validation_attempt": attempt}
                 )
+                emit_metric(
+                    self.metrics,
+                    MetricEvent(
+                        "validation",
+                        "coordinator",
+                        "success",
+                        run_id=run_id,
+                        input_tokens=tokens,
+                        cost_usd=cost,
+                    ),
+                )
                 return True
             if attempt < self.limits.attempts:
                 self.store.transition(run_id, RunState.IMPLEMENT, {"validation_attempt": attempt})
+        emit_metric(
+            self.metrics,
+            MetricEvent(
+                "validation",
+                "coordinator",
+                "failure",
+                run_id=run_id,
+                input_tokens=tokens,
+                cost_usd=cost,
+            ),
+        )
         return False

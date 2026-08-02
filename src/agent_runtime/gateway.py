@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -9,6 +10,9 @@ from uuid import uuid4
 
 if TYPE_CHECKING:
     from agent_runtime.durable import SQLiteRunStore
+    from agent_runtime.metrics import MetricsSink
+
+from agent_runtime.metrics import MetricEvent, emit_metric
 
 
 class PolicyDecision(StrEnum):
@@ -202,9 +206,12 @@ class CapabilityGateway:
         audit: InMemoryAuditSink,
         context: InvocationContext,
         store: SQLiteRunStore | None = None,
+        *,
+        metrics: MetricsSink | None = None,
     ) -> None:
         self.catalog, self.policy, self.audit, self.context = catalog, policy, audit, context
         self.store = store
+        self.metrics = metrics
         self._executions: dict[str, ExecutionRecord] = {}
 
     def _audit(self, outcome: str, operation: str, **kwargs: Any) -> None:
@@ -238,6 +245,15 @@ class CapabilityGateway:
     def _authorized(self, capability_id: str, operation: str) -> Capability:
         capability = self.catalog.get(capability_id)
         decision = self.policy.decide(capability_id, self.context)
+        emit_metric(
+            self.metrics,
+            MetricEvent(
+                "policy",
+                "capability_decision",
+                decision.value.lower(),
+                run_id=self.context.run_id,
+            ),
+        )
         if capability is None or decision != PolicyDecision.ALLOW:
             detail = (
                 "approval required" if decision == PolicyDecision.REQUIRE_APPROVAL else "denied"
@@ -266,6 +282,7 @@ class CapabilityGateway:
         return capability.descriptor
 
     def invoke(self, capability_id: str, arguments: Mapping[str, Any]) -> ExecutionRecord:
+        started = time.monotonic()
         capability = self._authorized(capability_id, "invoke")
         try:
             _validate(arguments, capability.descriptor.input_schema)
@@ -306,6 +323,16 @@ class CapabilityGateway:
                         capability_id=capability_id,
                         execution_id=record.execution_id,
                     )
+                    emit_metric(
+                        self.metrics,
+                        MetricEvent(
+                            "capability",
+                            "invoke",
+                            "replayed",
+                            run_id=self.context.run_id,
+                            duration_ms=(time.monotonic() - started) * 1000,
+                        ),
+                    )
                     return record
         else:
             record = ExecutionRecord(
@@ -331,6 +358,16 @@ class CapabilityGateway:
                 execution_id=record.execution_id,
                 detail=str(error),
             )
+        emit_metric(
+            self.metrics,
+            MetricEvent(
+                "capability",
+                "invoke",
+                "success" if record.status == ExecutionStatus.SUCCEEDED else "failure",
+                run_id=self.context.run_id,
+                duration_ms=(time.monotonic() - started) * 1000,
+            ),
+        )
         return record
 
     def status(self, execution_id: str) -> ExecutionRecord:

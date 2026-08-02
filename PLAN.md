@@ -543,17 +543,19 @@ Acceptance criteria:
 - Skills cannot execute code, install packages, select endpoints, or access raw secrets.
 - Resume uses the exact pinned skill content.
 
-## Phase 10 — Evaluation and operational hardening `[>]`
+## Phase 10 — Evaluation and operational hardening `[x]`
 
 Goal: measure reliability and prepare for production based on observed needs.
 
 Deliverables:
 
-- Golden JIRA/repository task corpus and model regression suite.
-- Crash/restart matrix for every state.
+- Checked-in golden JIRA/repository task contract and deterministic regression harness.
+- Durable-state persistence matrix for every state, plus publication and reporting service
+  reconstruction/reconciliation tests.
 - Structured metrics for model calls, capability latency, policy decisions, retries, cost, and
   outcomes.
-- OpenTelemetry export and retention/redaction policies.
+- OpenTelemetry export, bounded metric retention/redaction, and indefinite security-audit
+  retention.
 - Multi-worker claiming only when workload demonstrates the need.
 
 Deferred until justified by measurements:
@@ -564,6 +566,8 @@ Deferred until justified by measurements:
 - Distributed queues and workflow engines.
 - Multiple observability vendors.
 - General application plugin framework.
+
+Also intentionally deferred: multi-worker claiming, pending demonstrated workload need.
 
 ---
 

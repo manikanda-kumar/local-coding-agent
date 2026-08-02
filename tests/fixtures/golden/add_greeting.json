@@ -1,0 +1,7 @@
+{
+  "task_id": "JIRA-101",
+  "jira": {"key": "JIRA-101", "summary": "Add deterministic greeting", "description": "Change greeting.txt to hello world."},
+  "repository": {"greeting.txt": "hello\n"},
+  "expected_files": {"greeting.txt": "hello world\n"},
+  "required_validations": ["unit", "lint"]
+}

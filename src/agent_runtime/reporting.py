@@ -15,6 +15,7 @@ import httpx
 
 from agent_runtime.durable import RunState, SQLiteRunStore
 from agent_runtime.jira import JiraAuth, _text
+from agent_runtime.metrics import MetricEvent, MetricsSink, emit_metric
 
 
 class JiraWriteError(RuntimeError):
@@ -145,9 +146,11 @@ class JiraReportingService:
         adapter: JiraWriteAdapter,
         *,
         transition_ids: Iterable[str] = (),
+        metrics: MetricsSink | None = None,
     ) -> None:
         self.store, self.adapter = store, adapter
         self.transition_ids = frozenset(str(value) for value in transition_ids)
+        self.metrics = metrics
 
     def _binding(
         self, run_id: str, issue_key: str, transition_id: str, story_revision: int, expires_at: str
@@ -285,6 +288,19 @@ class JiraReportingService:
         return result
 
     def report(self, run_id: str, *, transition_approval_id: str | None = None) -> JiraReportResult:
+        try:
+            result = self._report(run_id, transition_approval_id=transition_approval_id)
+        except Exception:
+            emit_metric(
+                self.metrics, MetricEvent("report", "jira_report", "failure", run_id=run_id)
+            )
+            raise
+        emit_metric(self.metrics, MetricEvent("report", "jira_report", "success", run_id=run_id))
+        return result
+
+    def _report(
+        self, run_id: str, *, transition_approval_id: str | None = None
+    ) -> JiraReportResult:
         result = self._comment(run_id)
         transitioned = False
         if transition_approval_id is not None:
