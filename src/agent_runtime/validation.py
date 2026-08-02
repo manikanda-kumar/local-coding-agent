@@ -322,14 +322,26 @@ class ImplementationValidationCoordinator:
             self.store.transition(run_id, RunState.IMPLEMENT)
         elif self.store.get_run(run_id).state == RunState.VALIDATE:
             last_checkpoint = self.store.connection.execute(
-                "SELECT passed FROM validation_checkpoints WHERE run_id=? ORDER BY attempt DESC LIMIT 1",
+                "SELECT attempt,passed FROM validation_checkpoints "
+                "WHERE run_id=? ORDER BY attempt DESC LIMIT 1",
                 (run_id,),
             ).fetchone()
             running = self.store.connection.execute(
                 "SELECT 1 FROM validation_attempts WHERE run_id=? AND status='RUNNING' LIMIT 1",
                 (run_id,),
             ).fetchone()
-            if last_checkpoint is not None and not last_checkpoint["passed"] and running is None:
+            if last_checkpoint is not None and running is None:
+                if last_checkpoint["passed"]:
+                    self.store.transition(
+                        run_id,
+                        RunState.AWAITING_PUBLISH_APPROVAL,
+                        {"validation_attempt": last_checkpoint["attempt"]},
+                    )
+                    emit_metric(
+                        self.metrics,
+                        MetricEvent("validation", "coordinator", "success", run_id=run_id),
+                    )
+                    return True
                 self.store.transition(run_id, RunState.IMPLEMENT)
         for attempt in range(self.store.next_validation_attempt(run_id), self.limits.attempts + 1):
             if attempt > 1:

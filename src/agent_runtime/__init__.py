@@ -127,6 +127,7 @@ from agent_runtime.validation import (
     ValidationService,
     validation_capabilities,
 )
+from agent_runtime.workflow import CodingAgentOutcome, JiraCodingAgentWorkflow
 from agent_runtime.workspace import (
     Workspace,
     WorkspaceError,
@@ -150,6 +151,7 @@ __all__ = [
     "ChatMessage",
     "ChatRequest",
     "ChatResponse",
+    "CodingAgentOutcome",
     "Comment",
     "CoordinatorLimits",
     "DurableAuditSink",
@@ -174,6 +176,7 @@ __all__ = [
     "InvalidTransition",
     "InvocationContext",
     "JiraAuth",
+    "JiraCodingAgentWorkflow",
     "JiraReadAdapter",
     "JiraReadError",
     "JiraReportResult",

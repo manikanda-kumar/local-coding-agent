@@ -71,6 +71,21 @@ class ModelRequestProfile:
     def request_extensions(self) -> dict[str, Any]:
         return _thaw(self.extensions)
 
+    def chat_request_options(self) -> dict[str, Any]:
+        """Return the runtime-owned options shared by all model call sites."""
+        return {
+            "temperature": self.temperature,
+            "max_tokens": self.max_output_tokens,
+            "top_p": self.top_p,
+            "top_k": self.top_k,
+            "seed": self.seed,
+            "stop": self.stop,
+            "timeout": self.timeout,
+            "reasoning_field": self.reasoning_field,
+            "reasoning_mode": self.reasoning_mode,
+            "extensions": self.request_extensions(),
+        }
+
 
 MODEL_PROFILES: Mapping[str, ModelRequestProfile] = MappingProxyType(
     {

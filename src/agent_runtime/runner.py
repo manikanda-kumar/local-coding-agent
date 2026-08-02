@@ -61,22 +61,7 @@ class AgentRunner:
         for _ in range(self.max_turns):
             started = time.monotonic()
             try:
-                options = (
-                    {}
-                    if self.profile is None
-                    else {
-                        "temperature": self.profile.temperature,
-                        "max_tokens": self.profile.max_output_tokens,
-                        "top_p": self.profile.top_p,
-                        "top_k": self.profile.top_k,
-                        "seed": self.profile.seed,
-                        "stop": self.profile.stop,
-                        "timeout": self.profile.timeout,
-                        "reasoning_field": self.profile.reasoning_field,
-                        "reasoning_mode": self.profile.reasoning_mode,
-                        "extensions": self.profile.request_extensions(),
-                    }
-                )
+                options = {} if self.profile is None else self.profile.chat_request_options()
                 response = self.provider.chat(
                     self.model, ChatRequest(tuple(messages), tools=GATEWAY_TOOLS, **options)
                 )

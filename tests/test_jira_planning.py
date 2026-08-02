@@ -10,6 +10,7 @@ from agent_runtime import (
     JiraAuth,
     JiraReadAdapter,
     JiraReadError,
+    ModelRequestProfile,
     RunState,
     SQLiteRunStore,
     StoryChangedError,
@@ -143,6 +144,42 @@ def test_workflow_stored_resume_injection_boundary_and_immutable_snapshot(tmp_pa
     assert request.tools == ()
     assert "<STORY_DATA>" in request.messages[1].content
     assert resumed.story_snapshot("run").snapshot["description"].startswith("IGNORE SYSTEM")
+    assert resumed.get_run("run").story_hash == resumed.story_snapshot("run").content_hash
+
+
+def test_intake_rebinds_existing_snapshot_after_crash_but_never_after_new(tmp_path):
+    store = SQLiteRunStore(tmp_path / "runs.db")
+    create_run(store)
+    snapshot = {"issue_key": "ABC-1"}
+    store.save_story_snapshot("run", "immutable-hash", snapshot)
+    # Simulate a legacy/crash boundary where the snapshot exists but the placeholder survived.
+    store.connection.execute("UPDATE runs SET story_hash='pending' WHERE run_id='run'")
+    store.connection.commit()
+    adapter = adapter_for(lambda _request: pytest.fail("persisted snapshot must not be refetched"))
+    IntakePlanningService(store, adapter, ScriptedProvider(())).intake("run", "ABC-1")
+    assert store.get_run("run").story_hash == "immutable-hash"
+    with pytest.raises(ValueError, match="immutable after intake"):
+        store.save_story_snapshot("run", "changed-hash", {"issue_key": "ABC-1", "changed": True})
+    assert store.get_run("run").story_hash == "immutable-hash"
+    assert store.story_snapshot("run").content_hash == "immutable-hash"
+
+
+def test_planning_uses_profile_options_without_tools(tmp_path):
+    def handler(request):
+        if request.url.path.endswith("/comment"):
+            return httpx.Response(200, json={"comments": [], "total": 0})
+        return httpx.Response(200, json=issue())
+
+    store = SQLiteRunStore(tmp_path / "runs.db")
+    create_run(store)
+    provider = ScriptedProvider((ChatResponse("plan", "model", "scripted"),))
+    profile = ModelRequestProfile(0.2, 321, 0.8, seed=7)
+    service = IntakePlanningService(store, adapter_for(handler), provider, profile=profile)
+    service.intake("run", "ABC-1")
+    service.plan("run")
+    request = provider.requests[0][1]
+    assert request.tools == ()
+    assert (request.temperature, request.max_tokens, request.seed) == (0.2, 321, 7)
 
 
 def test_planning_resume_uses_plan_saved_before_transition(tmp_path):
@@ -170,7 +207,7 @@ def test_planning_resume_uses_plan_saved_before_transition(tmp_path):
     assert provider.requests == []
 
 
-def test_changed_story_requires_explicit_new_revision_or_new_run(tmp_path):
+def test_changed_story_requires_a_new_run_and_preserves_binding(tmp_path):
     current = {"summary": "one"}
 
     def handler(request):
@@ -182,12 +219,14 @@ def test_changed_story_requires_explicit_new_revision_or_new_run(tmp_path):
     create_run(store)
     service = IntakePlanningService(store, adapter_for(handler), ScriptedProvider(()))
     service.intake("run", "ABC-1")
+    original = store.story_snapshot("run")
     current["summary"] = "two"
-    with pytest.raises(StoryChangedError, match="explicit replan"):
+    with pytest.raises(StoryChangedError, match="start a new run"):
         service.refresh("run", "ABC-1")
-    assert store.story_snapshot("run").revision == 1
-    assert service.refresh("run", "ABC-1", accept_replan=True) == 2
-    assert not store.story_snapshot("run", 1).active
+    with pytest.raises(StoryChangedError, match="start a new run"):
+        service.refresh("run", "ABC-1", accept_replan=True)
+    assert store.story_snapshot("run") == original
+    assert store.get_run("run").story_hash == original.content_hash
 
 
 @pytest.mark.parametrize("content,reason", [("", None), ("partial", "length")])

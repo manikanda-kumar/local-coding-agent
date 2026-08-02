@@ -2,6 +2,7 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -207,6 +208,33 @@ def test_coordinator_resumes_validation_after_persisted_edit_without_reimplement
     store.transition("run", RunState.VALIDATE)
     coordinator = ImplementationValidationCoordinator(store, service)
 
+    assert coordinator.run(
+        "run", lambda _attempt: (_ for _ in ()).throw(AssertionError("must not implement"))
+    )
+    assert store.get_run("run").state == RunState.AWAITING_PUBLISH_APPROVAL
+
+
+def test_coordinator_resumes_passed_final_checkpoint_without_rerunning(tmp_path: Path):
+    store, manager, service = coordinator_fixture(tmp_path)
+    store.transition("run", RunState.IMPLEMENT)
+    manager.apply_patch("run", patch("old", "good"))
+    store.transition("run", RunState.VALIDATE)
+    result = ValidationResult("unit", True, 0, "", "", False, False)
+    generation, _ = manager._generation(manager.acquire("run"))
+    store.begin_validation("run", 3, "unit", generation)
+    store.finish_validation("run", 3, "unit", asdict(result))
+    store.save_validation_checkpoint("run", 3, [{"profile_id": "unit", "passed": True}])
+
+    class FailingBackend:
+        def run(self, *_args, **_kwargs):
+            raise AssertionError("validation must not rerun")
+
+    resumed_service = ValidationService(
+        manager, store, FailingBackend(), tuple(service.profiles.values())
+    )
+    coordinator = ImplementationValidationCoordinator(
+        store, resumed_service, CoordinatorLimits(attempts=3)
+    )
     assert coordinator.run(
         "run", lambda _attempt: (_ for _ in ()).throw(AssertionError("must not implement"))
     )

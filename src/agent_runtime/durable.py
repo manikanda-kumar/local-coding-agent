@@ -422,19 +422,27 @@ class SQLiteRunStore:
         self, run_id: str, content_hash: str, snapshot: Mapping[str, Any], *, activate: bool = True
     ) -> StoredStorySnapshot:
         """Append an immutable revision; identical content reuses its existing revision."""
+        run = self.get_run(run_id)
+        if activate and run.state != RunState.NEW and content_hash != run.story_hash:
+            raise ValueError("story binding is immutable after intake; start a new run")
         existing = self.connection.execute(
             "SELECT * FROM story_snapshots WHERE run_id=? AND content_hash=?",
             (run_id, content_hash),
         ).fetchone()
         if existing is not None:
-            if activate and not existing["active"]:
+            if activate:
                 with self.connection:
+                    if not existing["active"]:
+                        self.connection.execute(
+                            "UPDATE story_snapshots SET active=0 WHERE run_id=?", (run_id,)
+                        )
+                        self.connection.execute(
+                            "UPDATE story_snapshots SET active=1 WHERE run_id=? AND revision=?",
+                            (run_id, existing["revision"]),
+                        )
                     self.connection.execute(
-                        "UPDATE story_snapshots SET active=0 WHERE run_id=?", (run_id,)
-                    )
-                    self.connection.execute(
-                        "UPDATE story_snapshots SET active=1 WHERE run_id=? AND revision=?",
-                        (run_id, existing["revision"]),
+                        "UPDATE runs SET story_hash=? WHERE run_id=? AND state=?",
+                        (content_hash, run_id, RunState.NEW),
                     )
             return self.story_snapshot(run_id, existing["revision"])
         row = self.connection.execute(
@@ -458,8 +466,10 @@ class SQLiteRunStore:
                 ),
             )
             if activate:
+                # Intake may replace a caller's placeholder with the fetched immutable binding.
                 self.connection.execute(
-                    "UPDATE runs SET story_hash=? WHERE run_id=?", (content_hash, run_id)
+                    "UPDATE runs SET story_hash=? WHERE run_id=? AND state=?",
+                    (content_hash, run_id, RunState.NEW),
                 )
         return self.story_snapshot(run_id, revision)
 
