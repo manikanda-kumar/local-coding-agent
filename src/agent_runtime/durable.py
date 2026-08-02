@@ -96,9 +96,22 @@ def _json(value: Any) -> str:
 
 
 def invocation_identity(
-    run_id: str, step: str, capability_id: str, arguments: Mapping[str, Any]
+    run_id: str,
+    step: str,
+    capability_id: str,
+    arguments: Mapping[str, Any],
+    invocation_key: str | None = None,
 ) -> str:
-    material = _json([run_id, step, capability_id, arguments]).encode()
+    material: list[Any] = [run_id, step, capability_id, arguments]
+    if invocation_key is not None:
+        if (
+            not isinstance(invocation_key, str)
+            or not invocation_key
+            or len(invocation_key.encode("utf-8")) > 512
+        ):
+            raise ValueError("invocation key is invalid or unbounded")
+        material.append(invocation_key)
+    material = _json(material).encode()
     return hashlib.sha256(material).hexdigest()
 
 
@@ -632,14 +645,22 @@ class SQLiteRunStore:
         return row[0]
 
     def begin_invocation(
-        self, run_id: str, step: str, capability_id: str, arguments: Mapping[str, Any]
+        self,
+        run_id: str,
+        step: str,
+        capability_id: str,
+        arguments: Mapping[str, Any],
+        *,
+        invocation_key: str | None = None,
     ) -> StoredInvocation:
         run = self.get_run(run_id)
         if run.state in _TERMINAL:
             if run.state == RunState.CANCELLED:
                 raise RunCancelled("run is cancelled")
             raise RuntimeError(f"run is terminal: {run.state}")
-        identity = invocation_identity(run_id, step, capability_id, arguments)
+        identity = invocation_identity(
+            run_id, step, capability_id, arguments, invocation_key=invocation_key
+        )
         existing = self.connection.execute(
             "SELECT * FROM invocations WHERE invocation_id=?", (identity,)
         ).fetchone()

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from dataclasses import dataclass
+from uuid import uuid4
 
 from agent_runtime.gateway import CapabilityGateway, GatewayError, to_jsonable
 from agent_runtime.metrics import MetricEvent, MetricsSink, emit_metric
@@ -197,10 +199,18 @@ class AgentRunner:
             [tool.to_dict() for tool in GATEWAY_TOOLS]
         )
 
-    def run(self, prompt: str) -> str:
+    def run(self, prompt: str, *, session_id: str | None = None) -> str:
+        if session_id is None:
+            session_id = str(uuid4())
+        elif (
+            not isinstance(session_id, str)
+            or not session_id
+            or len(session_id.encode("utf-8")) > 256
+        ):
+            raise ValueError("agent session ID is invalid or unbounded")
         messages = [ChatMessage(role="user", content=prompt)]
         invocations = 0
-        for _ in range(self.max_turns):
+        for turn in range(1, self.max_turns + 1):
             started = time.monotonic()
             try:
                 options = {} if self.profile is None else self.profile.chat_request_options()
@@ -241,18 +251,23 @@ class AgentRunner:
             messages.append(assistant_message)
             if not response.tool_calls:
                 return response.content
-            for call in response.tool_calls:
+            for tool_index, call in enumerate(response.tool_calls, start=1):
                 if call.name == "capability_invoke":
                     if invocations >= self.max_invocations:
                         raise RuntimeError("agent invocation limit reached")
                     invocations += 1
-                result = self._dispatch(call)
+                result = self._dispatch(
+                    call,
+                    invocation_key=hashlib.sha256(
+                        f"agent:{session_id}:turn:{turn}:tool:{tool_index}".encode()
+                    ).hexdigest(),
+                )
                 messages.append(
                     ChatMessage(role="tool", content=json.dumps(result), tool_call_id=call.id)
                 )
         raise RuntimeError("agent turn limit reached")
 
-    def _dispatch(self, call: ToolCall) -> dict:
+    def _dispatch(self, call: ToolCall, *, invocation_key: str | None = None) -> dict:
         try:
             args = call.parse_arguments()
             known = {tool.name: tool for tool in GATEWAY_TOOLS}
@@ -272,7 +287,7 @@ class AgentRunner:
             "capability_search": lambda: self.gateway.search(args["query"]),
             "capability_describe": lambda: self.gateway.describe(args["capability_id"]),
             "capability_invoke": lambda: self.gateway.invoke(
-                args["capability_id"], args["arguments"]
+                args["capability_id"], args["arguments"], invocation_key=invocation_key
             ),
             "execution_status": lambda: self.gateway.status(args["execution_id"]),
             "execution_cancel": lambda: self.gateway.cancel(args["execution_id"]),

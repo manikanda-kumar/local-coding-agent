@@ -83,7 +83,7 @@ and verification-driven execution.
 
 ### Current verification baseline
 
-- `175 passed, 2 skipped` in the complete test suite.
+- `180 passed, 2 skipped` in the complete test suite.
 - Ruff lint and formatting checks pass.
 - The skipped tests are opt-in live JIRA and OpenRouter checks, not unit-test failures.
 
@@ -139,6 +139,14 @@ and verification-driven execution.
 - Add failure-injection exercises for model timeout, MCP timeout, sandbox termination, base drift,
   GitHub uncertainty, JIRA uncertainty, and process restart.
 - Promote a profile only after golden-task and human-review thresholds are defined and met.
+
+### Implementation-loop prerequisite
+
+- Done: models can read bounded UTF-8 line pages from the current confined workspace generation;
+  chained no-follow directory descriptors prevent ancestor symlink races.
+- Done: runtime-owned session/turn/tool invocation keys prevent stale durable read replay while
+  preserving exact retry identity; interrupted pure reads are safely restartable.
+- Pending: durable model-turn journal and production model-backed implementation driver.
 
 ## Pending — Deployment Inputs and Explicit Approvals
 

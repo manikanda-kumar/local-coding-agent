@@ -118,6 +118,7 @@ class InMemoryCapabilityCatalog:
         reserved_effects = {
             "workspace.patch.apply": Effect.TRUSTED_WORKSPACE_WRITE,
             "workspace.file.create": Effect.TRUSTED_WORKSPACE_WRITE,
+            "workspace.file.read": Effect.TRUSTED_WORKSPACE_READ,
             "git.diff.read": Effect.TRUSTED_WORKSPACE_READ,
             "workspace.test.run": Effect.TRUSTED_PROCESS_EXECUTION,
             "workspace.lint.run": Effect.TRUSTED_PROCESS_EXECUTION,
@@ -414,7 +415,13 @@ class CapabilityGateway:
         self._audit("success", "describe", capability_id=capability_id)
         return capability.descriptor
 
-    def invoke(self, capability_id: str, arguments: Mapping[str, Any]) -> ExecutionRecord:
+    def invoke(
+        self,
+        capability_id: str,
+        arguments: Mapping[str, Any],
+        *,
+        invocation_key: str | None = None,
+    ) -> ExecutionRecord:
         started = time.monotonic()
         capability = self._authorized(capability_id, "invoke")
         try:
@@ -426,7 +433,11 @@ class CapabilityGateway:
         if self.store is not None:
             try:
                 durable = self.store.begin_invocation(
-                    self.context.run_id, self.context.stage, capability_id, arguments
+                    self.context.run_id,
+                    self.context.stage,
+                    capability_id,
+                    arguments,
+                    invocation_key=invocation_key,
                 )
             except Exception as error:
                 self._audit("failure", "invoke", capability_id=capability_id, detail=str(error))
@@ -451,7 +462,13 @@ class CapabilityGateway:
                     record.status == ExecutionStatus.FAILED
                     and record.error == "interrupted before terminal result"
                     and capability.descriptor.effect
-                    in {Effect.TRUSTED_WORKSPACE_WRITE, Effect.TRUSTED_MEMORY_WRITE}
+                    in {
+                        Effect.READ,
+                        Effect.TRUSTED_READ,
+                        Effect.TRUSTED_WORKSPACE_READ,
+                        Effect.TRUSTED_WORKSPACE_WRITE,
+                        Effect.TRUSTED_MEMORY_WRITE,
+                    }
                 ):
                     durable = self.store.restart_interrupted_invocation(record.invocation_id)
                     record.status = ExecutionStatus(durable.status)

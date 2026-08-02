@@ -1,17 +1,22 @@
+import json
 import os
+import shutil
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
 from agent_runtime import (
+    AgentRunner,
     CapabilityGateway,
+    ChatResponse,
     DurableAuditSink,
     InMemoryCapabilityCatalog,
     InvocationContext,
     RunState,
     SQLiteRunStore,
     StaticPolicyEngine,
+    ToolCall,
     WorkspaceError,
     WorkspaceLimits,
     WorkspaceManager,
@@ -64,6 +69,197 @@ def test_archive_ignores_repo_filters_and_generations_replay(tmp_path):
     assert manager.create_file("run", "nested/new.txt", "safe\n") == result
     assert store.connection.execute("SELECT current_generation FROM workspaces").fetchone()[0] == 1
     assert (workspace.path / "gen-0" / "file.txt").read_text() == "one\ntwo\n"
+
+
+def test_bounded_file_read_tracks_current_generation(tmp_path):
+    _, _, manager = setup_workspace(tmp_path)
+    first = manager.read_file("run", "file.txt", max_lines=1)
+    assert first["generation"] == 0
+    assert first["content"] == "one\n"
+    assert first["next_start_line"] == 2 and not first["eof"]
+    second = manager.read_file("run", "file.txt", start_line=2)
+    assert second["content"] == "two\n" and second["eof"]
+
+    manager.apply_patch(
+        "run", "--- a/file.txt\n+++ b/file.txt\n@@ -1,2 +1,2 @@\n-one\n+ONE\n two\n"
+    )
+    current = manager.read_file("run", "file.txt")
+    assert current["generation"] == 1
+    assert current["content"] == "ONE\ntwo\n"
+    assert current["content_sha256"] != first["content_sha256"]
+
+
+def test_file_read_rejects_unsafe_binary_and_unbounded_lines(tmp_path):
+    _, _, manager = setup_workspace(tmp_path)
+    for path in ("../escape", "/absolute", ".git/config", "a/.GIT/x"):
+        with pytest.raises(WorkspaceError):
+            manager.read_file("run", path)
+    workspace = manager.acquire("run")
+    (workspace.path / "gen-0" / "binary.dat").write_bytes(b"\xff\x00")
+    with pytest.raises(WorkspaceError, match="UTF-8"):
+        manager.read_file("run", "binary.dat")
+    (workspace.path / "gen-0" / "long.txt").write_text("x" * 32_001)
+    with pytest.raises(WorkspaceError, match="line exceeds"):
+        manager.read_file("run", "long.txt")
+
+
+def test_file_read_rejects_parent_swapped_after_verification(tmp_path):
+    _, _, manager = setup_workspace(tmp_path)
+    manager.create_file("run", "nested/file.txt", "safe\n")
+    workspace = manager.acquire("run")
+    _, current = manager._generation(workspace)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "file.txt").write_text("secret\n")
+    original_verify = manager._verify
+    calls = 0
+
+    def racing_verify(active_workspace):
+        nonlocal calls
+        calls += 1
+        original_verify(active_workspace)
+        if calls == 2:
+            shutil.rmtree(current / "nested")
+            os.symlink(outside, current / "nested")
+
+    manager._verify = racing_verify
+    with pytest.raises(WorkspaceError, match="opened safely"):
+        manager.read_file("run", "nested/file.txt")
+
+
+def test_durable_workspace_reads_use_runtime_invocation_keys_and_recover(tmp_path):
+    _, store, manager = setup_workspace(tmp_path)
+    workspace = manager.acquire("run")
+    capabilities = workspace_capabilities(manager)
+    gateway = CapabilityGateway(
+        InMemoryCapabilityCatalog(capabilities),
+        StaticPolicyEngine(frozenset({"workspace.file.read"})),
+        DurableAuditSink(store),
+        InvocationContext("principal", "run", "IMPLEMENT", workspace_id=workspace.workspace_id),
+        store,
+    )
+    arguments = {"path": "file.txt"}
+    first = gateway.invoke(
+        "workspace.file.read", arguments, invocation_key="attempt:1:turn:1:tool:1"
+    )
+    manager.apply_patch(
+        "run", "--- a/file.txt\n+++ b/file.txt\n@@ -1,2 +1,2 @@\n-one\n+ONE\n two\n"
+    )
+    second = gateway.invoke(
+        "workspace.file.read", arguments, invocation_key="attempt:1:turn:2:tool:1"
+    )
+    assert first.result["generation"] == 0
+    assert second.result["generation"] == 1
+
+    intent = store.begin_invocation(
+        "run",
+        "IMPLEMENT",
+        "workspace.file.read",
+        arguments,
+        invocation_key="attempt:1:turn:3:tool:1",
+    )
+    assert store.recover_running_invocations("run") == 1
+    recovered = gateway.invoke(
+        "workspace.file.read", arguments, invocation_key="attempt:1:turn:3:tool:1"
+    )
+    assert recovered.execution_id == intent.execution_id
+    assert recovered.status == "SUCCEEDED" and recovered.result["generation"] == 1
+
+
+def test_agent_runner_keys_identical_reads_by_session_turn(tmp_path):
+    _, store, manager = setup_workspace(tmp_path)
+    workspace = manager.acquire("run")
+    gateway = CapabilityGateway(
+        InMemoryCapabilityCatalog(workspace_capabilities(manager)),
+        StaticPolicyEngine(frozenset({"workspace.file.read"})),
+        DurableAuditSink(store),
+        InvocationContext("principal", "run", "IMPLEMENT", workspace_id=workspace.workspace_id),
+        store,
+    )
+
+    def read_response(call_id):
+        return ChatResponse(
+            "",
+            "model",
+            "scripted",
+            tool_calls=(
+                ToolCall(
+                    call_id,
+                    "capability_invoke",
+                    json.dumps(
+                        {
+                            "capability_id": "workspace.file.read",
+                            "arguments": {"path": "file.txt"},
+                        }
+                    ),
+                ),
+            ),
+        )
+
+    class ReadsAcrossMutation:
+        name = "scripted"
+
+        def __init__(self):
+            self.turn = 0
+
+        def chat(self, _model, request):
+            self.turn += 1
+            if self.turn == 1:
+                return read_response("read-1")
+            result = json.loads(request.messages[-1].content)["data"]["result"]
+            if self.turn == 2:
+                assert result["generation"] == 0
+                manager.apply_patch(
+                    "run",
+                    "--- a/file.txt\n+++ b/file.txt\n@@ -1,2 +1,2 @@\n-one\n+ONE\n two\n",
+                )
+                return read_response("read-2")
+            assert result["generation"] == 1
+            return ChatResponse("done", "model", "scripted")
+
+        def close(self):
+            pass
+
+    assert (
+        AgentRunner(ReadsAcrossMutation(), "model", gateway).run(
+            "read twice", session_id="attempt-1"
+        )
+        == "done"
+    )
+    assert (
+        store.connection.execute(
+            "SELECT COUNT(*) FROM invocations WHERE capability_id='workspace.file.read'"
+        ).fetchone()[0]
+        == 2
+    )
+
+    class RetryFirstTurn:
+        name = "scripted"
+
+        def __init__(self):
+            self.turn = 0
+
+        def chat(self, _model, request):
+            self.turn += 1
+            if self.turn == 1:
+                return read_response("provider-regenerated-call-id")
+            result = json.loads(request.messages[-1].content)["data"]["result"]
+            assert result["generation"] == 0  # same durable turn replays the same execution
+            return ChatResponse("recovered", "model", "scripted")
+
+        def close(self):
+            pass
+
+    assert (
+        AgentRunner(RetryFirstTurn(), "model", gateway).run("read twice", session_id="attempt-1")
+        == "recovered"
+    )
+    assert (
+        store.connection.execute(
+            "SELECT COUNT(*) FROM invocations WHERE capability_id='workspace.file.read'"
+        ).fetchone()[0]
+        == 2
+    )
 
 
 def test_failed_candidate_and_interrupted_candidate_do_not_publish(tmp_path):

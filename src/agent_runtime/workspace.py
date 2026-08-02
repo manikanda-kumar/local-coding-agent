@@ -74,9 +74,23 @@ class WorkspaceManager:
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         if self.root.is_symlink() or not stat.S_ISDIR(self.root.lstat().st_mode):
             raise WorkspaceError("trusted root must be a real directory")
+        self._root_fd = os.open(
+            self.root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+        )
         self.store = store
         self.limits = limits or WorkspaceLimits()
         self.repositories = {key: Path(value).absolute() for key, value in repositories.items()}
+
+    def close(self) -> None:
+        if self._root_fd >= 0:
+            os.close(self._root_fd)
+            self._root_fd = -1
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except (AttributeError, OSError):
+            pass
 
     @contextmanager
     def _locked(self, workspace_id: str):
@@ -279,6 +293,98 @@ class WorkspaceManager:
         if count > self.limits.maximum_files or total > self.limits.maximum_bytes:
             raise WorkspaceError("workspace file or byte limit exceeded")
 
+    def read_file(
+        self,
+        run_id: str,
+        path: str,
+        *,
+        start_line: int = 1,
+        max_lines: int = 200,
+        maximum_page_bytes: int = 32_000,
+    ) -> dict[str, Any]:
+        if (
+            not isinstance(start_line, int)
+            or isinstance(start_line, bool)
+            or start_line < 1
+            or not isinstance(max_lines, int)
+            or isinstance(max_lines, bool)
+            or not 1 <= max_lines <= 400
+            or not 1 <= maximum_page_bytes <= 32_000
+        ):
+            raise WorkspaceError("file read range is invalid")
+        workspace = self.acquire(run_id)
+        with self._locked(workspace.workspace_id):
+            self._verify(workspace)
+            generation, root = self._generation(workspace)
+            del root
+            normalized = self._valid_path(path)
+            parts = PurePosixPath(normalized).parts
+            directory_fd = os.dup(self._root_fd)
+            try:
+                for part in (workspace.workspace_id, f"gen-{generation}", *parts[:-1]):
+                    next_fd = os.open(
+                        part,
+                        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                        dir_fd=directory_fd,
+                    )
+                    os.close(directory_fd)
+                    directory_fd = next_fd
+                fd = os.open(
+                    parts[-1],
+                    os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                    dir_fd=directory_fd,
+                )
+            except OSError as error:
+                raise WorkspaceError("workspace file cannot be opened safely") from error
+            finally:
+                os.close(directory_fd)
+            try:
+                metadata = os.fstat(fd)
+                if not stat.S_ISREG(metadata.st_mode):
+                    raise WorkspaceError("target is not a regular file")
+                chunks: list[bytes] = []
+                total = 0
+                while True:
+                    chunk = os.read(fd, min(65_536, self.limits.maximum_bytes + 1 - total))
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    total += len(chunk)
+                    if total > self.limits.maximum_bytes:
+                        raise WorkspaceError("workspace file exceeds byte limit")
+            finally:
+                os.close(fd)
+            data = b"".join(chunks)
+            try:
+                text = data.decode("utf-8")
+            except UnicodeDecodeError as error:
+                raise WorkspaceError("workspace file is not UTF-8 text") from error
+            lines = text.splitlines(keepends=True)
+            if start_line > len(lines) + 1:
+                raise WorkspaceError("file read starts beyond end of file")
+            selected: list[str] = []
+            selected_bytes = 0
+            for line in lines[start_line - 1 : start_line - 1 + max_lines]:
+                line_bytes = len(line.encode("utf-8"))
+                if selected_bytes + line_bytes > maximum_page_bytes:
+                    if not selected:
+                        raise WorkspaceError("one file line exceeds the page byte limit")
+                    break
+                selected.append(line)
+                selected_bytes += line_bytes
+            end_line = start_line + len(selected) - 1
+            eof = end_line >= len(lines)
+            return {
+                "path": normalized,
+                "generation": generation,
+                "start_line": start_line,
+                "end_line": end_line,
+                "content": "".join(selected),
+                "next_start_line": None if eof else end_line + 1,
+                "eof": eof,
+                "content_sha256": hashlib.sha256(data).hexdigest(),
+            }
+
     def create_file(self, run_id: str, path: str, content: str) -> dict[str, Any]:
         data = content.encode()
         return self._mutate(
@@ -473,6 +579,14 @@ class WorkspaceManager:
 
 def workspace_capabilities(manager: WorkspaceManager) -> tuple[Capability, ...]:
     strict = {"type": "object", "additionalProperties": False}
+    read_schema = strict | {
+        "properties": {
+            "path": {"type": "string", "minLength": 1, "maxLength": 512},
+            "start_line": {"type": "integer", "minimum": 1, "maximum": 1_000_000},
+            "max_lines": {"type": "integer", "minimum": 1, "maximum": 400},
+        },
+        "required": ["path"],
+    }
     patch_schema = strict | {"properties": {"patch": {"type": "string"}}, "required": ["patch"]}
     create_schema = strict | {
         "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
@@ -486,6 +600,23 @@ def workspace_capabilities(manager: WorkspaceManager) -> tuple[Capability, ...]:
         return context.run_id
 
     return (
+        Capability(
+            CapabilityDescriptor(
+                CapabilityCard(
+                    "workspace.file.read",
+                    "Read workspace file",
+                    "Read bounded UTF-8 lines from the current confined workspace generation",
+                ),
+                read_schema,
+                Effect.TRUSTED_WORKSPACE_READ,
+            ),
+            lambda a, c: manager.read_file(
+                checked(c),
+                a["path"],
+                start_line=a.get("start_line", 1),
+                max_lines=a.get("max_lines", 200),
+            ),
+        ),
         Capability(
             CapabilityDescriptor(
                 CapabilityCard(

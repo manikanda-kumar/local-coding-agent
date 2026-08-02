@@ -131,13 +131,16 @@
 - Production planning now initializes continuity and consumes the current resume packet/composed
   context, concrete model profile, provider, prompt, and policy pins before the model call; complete
   request/output budgeting and crash recovery are tested. Independent review: SHIP.
-- Current verification: `175 passed, 2 skipped`; Ruff checks, format check, and diff check pass.
+- Current-generation workspace reads are bounded, UTF-8-only, path-policy checked, and opened via
+  chained no-follow directory descriptors. Runtime-owned AgentRunner session/turn/tool keys prevent
+  stale read replay and safely recover interrupted reads. Independent review: SHIP.
+- Current verification: `180 passed, 2 skipped`; Ruff checks, format check, and diff check pass.
 
 ### Next
 
-- Commit planning context enforcement as a reviewable milestone.
-- Build a real implementation model loop; the current workflow implementation driver remains a
-  trusted callback and is not yet an autonomous coding loop.
+- Commit and push the safe workspace-inspection milestone.
+- Confirm durable implementation-loop operating semantics, then add the model-turn journal and
+  production driver; the current workflow implementation driver remains a trusted callback.
 - Run the checked-in live contract against the locally hosted vLLM endpoints when deployment URLs
   are supplied; no credentials or endpoints are committed.
 
