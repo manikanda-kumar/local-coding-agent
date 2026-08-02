@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+echo "[setup] Checking Python 3.11+"
+python3 - <<'PY'
+import sys
+
+if sys.version_info < (3, 11):
+    raise SystemExit("Python 3.11 or newer is required")
+PY
+
+if [[ -f pyproject.toml ]]; then
+  echo "[setup] Creating the project virtual environment"
+  python3 -m venv .venv
+
+  echo "[setup] Installing project and development dependencies"
+  if [[ -f uv.lock ]] && command -v uv >/dev/null 2>&1; then
+    uv sync --frozen --all-extras
+  else
+    .venv/bin/python -m pip install --disable-pip-version-check --upgrade pip
+    .venv/bin/python -m pip install --disable-pip-version-check -e '.[dev]'
+  fi
+else
+  echo "[setup] No pyproject.toml yet; no project dependencies to install"
+fi
+
+echo "[setup] Complete"
