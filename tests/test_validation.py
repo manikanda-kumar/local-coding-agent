@@ -110,6 +110,24 @@ def test_output_is_bounded_and_spilled(tmp_path: Path):
 
 
 @requires_bubblewrap
+def test_validation_output_and_artifact_redact_credentials(tmp_path: Path):
+    workspace = tmp_path / "generation"
+    workspace.mkdir()
+    sandbox = backend(tmp_path, output_bytes=16, full_output_bytes=4096)
+    result = run_python(
+        sandbox,
+        workspace,
+        'print(\'{"Authorization":"Basic validation-secret"}\\n\''
+        '+ \'{"Cookie":"session=one; csrf=two"}\\n\''
+        "+ \"{'client_secret': 'client-secret'}\\n\" + 'x'*100)",
+    )
+    artifact = sandbox.artifacts.get(result.output_artifact)
+    for secret in (b"validation-secret", b"session=one", b"csrf=two", b"client-secret"):
+        assert secret not in result.stdout.encode() and secret not in artifact
+    assert artifact.count(b"[REDACTED]") == 3
+
+
+@requires_bubblewrap
 def test_profile_is_argv_not_shell(tmp_path: Path):
     workspace = tmp_path / "generation"
     workspace.mkdir()

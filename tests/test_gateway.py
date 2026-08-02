@@ -5,6 +5,7 @@ import pytest
 from agent_runtime import (
     GATEWAY_TOOLS,
     AgentRunner,
+    ArtifactStore,
     Capability,
     CapabilityCard,
     CapabilityDescriptor,
@@ -13,6 +14,7 @@ from agent_runtime import (
     Effect,
     ExecutionStatus,
     GatewayError,
+    GatewayOutputPolicy,
     InMemoryAuditSink,
     InMemoryCapabilityCatalog,
     InvocationContext,
@@ -21,6 +23,7 @@ from agent_runtime import (
     ToolCall,
     fixture_read_capability,
 )
+from agent_runtime.metrics import RedactionPolicy, redact_sensitive_text
 from agent_runtime.providers import ScriptedProvider
 
 
@@ -110,6 +113,93 @@ def test_success_failure_status_and_invalid_operations_are_audited() -> None:
         "failure",
         "invalid_request",
     }
+
+
+def test_gateway_redacts_all_results_and_capability_errors() -> None:
+    schema = {"type": "object", "properties": {}, "additionalProperties": False}
+    result_capability = Capability(
+        CapabilityDescriptor(CapabilityCard("fixture.secrets", "Secrets", "return data"), schema),
+        lambda _args, _context: {
+            "access_token": "must-not-escape",
+            "Proxy-Authorization": "proxy-secret",
+            "passwd": "passwd-secret",
+            "Authorization: Basic key-secret": "failed request",
+            "nested": {
+                "databasePassword": "also-secret",
+                "safe": '{"Authorization":"Basic value-secret"}',
+            },
+        },
+    )
+    failure_capability = Capability(
+        CapabilityDescriptor(CapabilityCard("fixture.error", "Error", "fail"), schema),
+        lambda _args, _context: (_ for _ in ()).throw(
+            RuntimeError("request failed Authorization: Bearer-sensitive api_key=key-sensitive")
+        ),
+    )
+    gateway, audit = make_gateway(
+        allowed=frozenset({"fixture.secrets", "fixture.error"}),
+        extra=(result_capability, failure_capability),
+    )
+
+    result = gateway.invoke("fixture.secrets", {}).result
+    assert result == {
+        "access_token": "[REDACTED]",
+        "Proxy-Authorization": "[REDACTED]",
+        "passwd": "[REDACTED]",
+        "Authorization=[REDACTED]": "[REDACTED]",
+        "nested": {
+            "databasePassword": "[REDACTED]",
+            "safe": "{Authorization=[REDACTED]",
+        },
+    }
+    failure = gateway.invoke("fixture.error", {})
+    assert failure.error == "capability execution failed"
+    assert audit.events[-1].detail == failure.error
+
+
+@pytest.mark.parametrize(
+    ("value", "secret"),
+    [
+        ("Authorization: Basic dXNlcjpwYXNz", "dXNlcjpwYXNz"),
+        ("Proxy-Authorization: Digest auth-secret", "auth-secret"),
+        ("Cookie: session=one; csrf=two", "csrf=two"),
+        ("Set-Cookie: session=one; Secure", "session=one"),
+        ("access_token=oauth-secret", "oauth-secret"),
+        ("refresh_token=refresh-secret", "refresh-secret"),
+        ("client_secret=client-secret", "client-secret"),
+        ('api_key="secret with spaces"', "secret with spaces"),
+        ('{"Authorization":"Basic json-secret"}', "json-secret"),
+        ('{"Cookie":"session=one; csrf=two"}', "csrf=two"),
+        ('{"api_key":"json secret with spaces"}', "json secret with spaces"),
+        ("{'client_secret': 'python-secret'}", "python-secret"),
+        ("stripe=sk_live_123456789abcdef", "sk_live_123456789abcdef"),
+    ],
+)
+def test_sensitive_text_redacts_complete_standard_credentials(value, secret) -> None:
+    assert secret not in redact_sensitive_text(value)
+
+
+def test_gateway_preserves_small_shapes_and_marks_large_strings(tmp_path) -> None:
+    policy = GatewayOutputPolicy(inline_bytes=1024, artifact_bytes=32 * 1024)
+    values = list(range(129))
+    assert policy.normalize(values) == values
+
+    artifacts = ArtifactStore(tmp_path / "artifacts")
+    result = policy.normalize({"text": "é" * 10_000}, artifacts)
+    assert result["truncated"] and "artifact_sha256" in result
+    assert len(policy._encode(result)) <= policy.inline_bytes
+    assert artifacts.get(result["artifact_sha256"]).decode().count("é") == 10_000
+
+
+def test_gateway_output_policy_rejects_invalid_bounds() -> None:
+    with pytest.raises(ValueError, match="bounds"):
+        GatewayOutputPolicy(inline_bytes=100)
+    with pytest.raises(ValueError, match="bounds"):
+        GatewayOutputPolicy(inline_bytes=1024, artifact_bytes=512)
+    with pytest.raises(ValueError, match="finite"):
+        GatewayOutputPolicy(redaction=RedactionPolicy(max_string=1024)).normalize(
+            {"value": float("inf")}
+        )
 
 
 def test_validation_execution_is_discoverable_and_callable_only_in_validate() -> None:

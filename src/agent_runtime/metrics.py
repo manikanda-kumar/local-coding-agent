@@ -22,6 +22,8 @@ _SENSITIVE_NORMALIZED = frozenset(
         "clientsecret",
         "cookie",
         "password",
+        "passwd",
+        "proxyauthorization",
         "refreshtoken",
         "secret",
         "setcookie",
@@ -29,6 +31,45 @@ _SENSITIVE_NORMALIZED = frozenset(
     }
 )
 _LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$")
+
+
+def is_sensitive_key(key: str, configured: frozenset[str] = SENSITIVE_KEYS) -> bool:
+    normalized = "".join(character for character in key.lower() if character.isalnum())
+    configured_normalized = {
+        "".join(character for character in item.lower() if character.isalnum())
+        for item in configured
+    }
+    return (
+        normalized in configured_normalized | _SENSITIVE_NORMALIZED
+        or normalized.endswith(("password", "passwd", "secret", "token", "apikey", "cookie"))
+        or normalized.startswith(("authorization", "proxyauthorization", "cookie"))
+    )
+
+
+def redact_sensitive_text(value: str) -> str:
+    """Remove common credential forms from untrusted logs and capability text."""
+    value = re.sub(
+        r"(?im)([\"']?)\b(proxy-authorization|authorization)\b\1\s*:\s*[^\r\n]*",
+        r"\2=[REDACTED]",
+        value,
+    )
+    value = re.sub(
+        r"(?im)([\"']?)\b(set-cookie|cookie)\b\1\s*:\s*[^\r\n]*",
+        r"\2=[REDACTED]",
+        value,
+    )
+    value = re.sub(
+        r"(?i)([\"']?)\b(access_token|refresh_token|client_secret|api[_-]?key|password|passwd|secret|token)"
+        r"\b\1\s*[:=]\s*(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s,;]+)",
+        r"\2=[REDACTED]",
+        value,
+    )
+    value = re.sub(r"(?i)bearer\s+[^\s,;]+", "Bearer [REDACTED]", value)
+    return re.sub(
+        r"(?i)\b(?:sk|pk)[-_](?:(?:live|test)[-_])?[A-Za-z0-9_-]{8,}\b",
+        "[REDACTED]",
+        value,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,16 +96,10 @@ class RedactionPolicy:
             raise ValueError("redaction bounds must be positive")
 
     def _sensitive(self, key: str) -> bool:
-        normalized = "".join(character for character in key.lower() if character.isalnum())
-        configured = {
-            "".join(character for character in item.lower() if character.isalnum())
-            for item in self.sensitive_keys
-        }
-        return (
-            normalized in configured | _SENSITIVE_NORMALIZED
-            or normalized.endswith(("password", "secret", "token", "apikey", "cookie"))
-            or normalized.startswith(("authorization", "cookie"))
-        )
+        return is_sensitive_key(key, self.sensitive_keys)
+
+    def sensitive(self, key: str) -> bool:
+        return self._sensitive(key)
 
     def redact(self, value: Any) -> Any:
         return self._redact(value, depth=0, budget=[self.max_nodes])
@@ -81,7 +116,7 @@ class RedactionPolicy:
                 if not isinstance(key, str):
                     raise TypeError("metric attribute keys must be strings")
                 raw_name = key
-                name = raw_name[: self.max_string]
+                name = redact_sensitive_text(raw_name)[: self.max_string]
                 if name in result:
                     # Truncated keys can collide; never let a later value replace a redaction.
                     result[name] = "[REDACTED]"
@@ -98,7 +133,7 @@ class RedactionPolicy:
                 for item in islice(value, self.max_items)
             ]
         if isinstance(value, str):
-            return value[: self.max_string]
+            return redact_sensitive_text(value)[: self.max_string]
         if value is None or isinstance(value, bool):
             return value
         if isinstance(value, (int, float)) and not isinstance(value, bool):

@@ -13,6 +13,7 @@ import httpx
 
 from agent_runtime.durable import ArtifactStore
 from agent_runtime.gateway import Capability, CapabilityCard, CapabilityDescriptor
+from agent_runtime.metrics import is_sensitive_key, redact_sensitive_text
 
 
 def canonical_schema_hash(schema: Mapping[str, Any]) -> str:
@@ -155,19 +156,20 @@ class StreamableHTTPTransport:
         return result
 
 
-_SECRET_KEYS = ("secret", "token", "password", "passwd", "api_key", "apikey", "authorization")
-
-
 def redact_untrusted(value: Any) -> Any:
     if isinstance(value, Mapping):
-        return {
-            str(key): "[REDACTED]"
-            if any(part in str(key).casefold() for part in _SECRET_KEYS)
-            else redact_untrusted(item)
-            for key, item in value.items()
-        }
+        result = {}
+        for key, item in value.items():
+            raw_key = str(key)
+            safe_key = redact_sensitive_text(raw_key)
+            if safe_key in result:
+                raise MCPFailure("redaction_key_collision")
+            result[safe_key] = "[REDACTED]" if is_sensitive_key(raw_key) else redact_untrusted(item)
+        return result
     if isinstance(value, (list, tuple)):
         return [redact_untrusted(item) for item in value]
+    if isinstance(value, str):
+        return redact_sensitive_text(value)
     return value
 
 

@@ -8,6 +8,7 @@ from agent_runtime import (
     CapabilityGateway,
     DurableAuditSink,
     ExecutionStatus,
+    GatewayOutputPolicy,
     InMemoryCapabilityCatalog,
     InvalidTransition,
     InvocationContext,
@@ -17,6 +18,7 @@ from agent_runtime import (
     StaticPolicyEngine,
     fixture_read_capability,
 )
+from agent_runtime.metrics import RedactionPolicy
 
 
 def create_run(store: SQLiteRunStore, run_id: str = "run") -> None:
@@ -113,6 +115,69 @@ def test_completed_replay_does_not_execute_handler_again(tmp_path) -> None:
     assert replay.execution_id == first.execution_id
     assert replay.status == ExecutionStatus.SUCCEEDED
     assert replay.result == first.result
+
+
+def test_gateway_spills_only_redacted_bounded_results_and_replays_pointer(tmp_path) -> None:
+    path = tmp_path / "runs.db"
+    store = SQLiteRunStore(path)
+    create_run(store)
+    fixture = fixture_read_capability()
+    capability = type(fixture)(
+        fixture.descriptor,
+        lambda _arguments, _context: {
+            "token": "must-not-persist",
+            "payload": "x" * 2_000,
+        },
+    )
+    artifacts = ArtifactStore(tmp_path / "artifacts")
+    policy = GatewayOutputPolicy(
+        inline_bytes=256,
+        artifact_bytes=4096,
+        redaction=RedactionPolicy(max_string=4096),
+    )
+
+    def gateway(active_store):
+        return CapabilityGateway(
+            InMemoryCapabilityCatalog((capability,)),
+            StaticPolicyEngine(frozenset({"fixture.read"})),
+            DurableAuditSink(active_store),
+            InvocationContext("principal", "run", "NEW"),
+            active_store,
+            output_policy=policy,
+            artifacts=artifacts,
+        )
+
+    first = gateway(store).invoke("fixture.read", {"key": "x"})
+    assert first.result["truncated"]
+    artifact = artifacts.get(first.result["artifact_sha256"])
+    assert b"must-not-persist" not in artifact
+    assert b"[REDACTED]" in artifact
+    persisted = store.connection.execute("SELECT result_json FROM invocations").fetchone()[0]
+    assert "must-not-persist" not in persisted
+
+    store.close()
+    restarted = SQLiteRunStore(path)
+    replay = gateway(restarted).invoke("fixture.read", {"key": "x"})
+    assert replay.result == first.result
+
+
+def test_gateway_never_replays_an_unversioned_legacy_result(tmp_path) -> None:
+    store = SQLiteRunStore(tmp_path / "runs.db")
+    create_run(store)
+    invocation = store.begin_invocation("run", "NEW", "fixture.read", {"key": "legacy"})
+    store.finish_invocation(invocation.invocation_id, result={"token": "legacy-secret"})
+    gateway = CapabilityGateway(
+        InMemoryCapabilityCatalog((fixture_read_capability(),)),
+        StaticPolicyEngine(frozenset({"fixture.read"})),
+        DurableAuditSink(store),
+        InvocationContext("principal", "run", "NEW"),
+        store,
+    )
+
+    replay = gateway.invoke("fixture.read", {"key": "legacy"})
+    assert replay.status == ExecutionStatus.FAILED
+    assert replay.result is None
+    assert replay.error == "legacy capability result is unavailable"
 
 
 def test_durable_invocation_and_attempt_audit_precede_handler(tmp_path) -> None:

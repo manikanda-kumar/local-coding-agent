@@ -114,14 +114,19 @@
 - Tier 3 end-to-end workflow complete and independently reviewed SHIP: persisted-state dispatch,
   external publication/transition approval pauses, immutable story binding, passed-checkpoint
   recovery, and real-service reconstruction across PUBLISH and REPORT crash windows.
-- Current verification: `132 passed, 1 skipped`; Ruff checks, format check, and diff check pass.
+- Executable golden workflow scoring replaces the fake dict-only claim; opt-in real OpenRouter
+  search/describe/invoke loops passed Gemma-4-31B, MiniMax-M2.7, GLM-5.2, and Kimi-K3.
+- Gateway-owned output normalization now preserves shape until byte sizing, recursively sanitizes
+  structured and textual credentials, sanitizes MCP/validation artifacts before spill, persists a
+  normalization version, and refuses legacy raw rows on replay.
+- Current verification: `151 passed, 2 skipped`; Ruff checks, format check, and diff check pass.
 
 ### Next
 
-- Commit Tier 3 as a reviewable milestone.
-- Replace the synthetic golden scorer with executable workflow scenarios and durable outcomes.
-- Add context budgeting/compaction, then optional live vLLM profile smoke tests gated by
-  environment configuration.
+- Commit executable golden/live checks and gateway output hardening as a reviewable milestone.
+- Add prefix-cache-stable context budgeting/compaction, then continuity ledger/context composer.
+- Run the checked-in live contract against the locally hosted vLLM endpoints when deployment URLs
+  are supplied; no credentials or endpoints are committed.
 
 ## Open questions
 

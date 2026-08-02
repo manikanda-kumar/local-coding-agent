@@ -108,7 +108,16 @@ def test_only_reviewed_healthy_mapping_becomes_read_capability_and_drift_quarant
 
 def test_recursive_redaction_spill_and_hard_maximum(tmp_path):
     output = {
-        "content": [{"password": "bad", "nested": {"access_token": "also-bad"}, "text": "x" * 80}]
+        "content": [
+            {
+                "password": "bad",
+                "Cookie": "session=structured-secret",
+                "Set-Cookie": "csrf=structured-secret",
+                "Authorization: Basic key-secret": "failed",
+                "nested": {"access_token": "also-bad"},
+                "text": '{"Authorization":"Basic value-secret"}' + "x" * 80,
+            }
+        ]
     }
     store = ArtifactStore(tmp_path / "artifacts")
     adapter = MCPAllowlistAdapter(
@@ -120,7 +129,9 @@ def test_recursive_redaction_spill_and_hard_maximum(tmp_path):
     )
     result = adapter.capabilities()[0].handler({"query": "Widget"}, None)
     full = store.get(result["artifact_sha256"])
-    assert b"bad" not in full and full.count(b"[REDACTED]") == 2
+    for secret in (b"bad", b"value-secret", b"key-secret", b"structured-secret"):
+        assert secret not in full
+    assert full.count(b"[REDACTED]") == 7
 
     too_large = MCPAllowlistAdapter(
         "code-intelligence",

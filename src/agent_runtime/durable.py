@@ -77,6 +77,7 @@ class StoredInvocation:
     result: Any = None
     error: str | None = None
     replayed: bool = False
+    normalized_version: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,7 +159,8 @@ class SQLiteRunStore:
               invocation_id TEXT PRIMARY KEY, execution_id TEXT UNIQUE NOT NULL,
               run_id TEXT NOT NULL REFERENCES runs(run_id), step TEXT NOT NULL,
               capability_id TEXT NOT NULL, arguments_json TEXT NOT NULL, status TEXT NOT NULL,
-              result_json TEXT, error TEXT, created_at TEXT NOT NULL, completed_at TEXT
+              result_json TEXT, error TEXT, created_at TEXT NOT NULL, completed_at TEXT,
+              normalized_version INTEGER
             );
             CREATE TABLE IF NOT EXISTS approvals (
               approval_id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(run_id),
@@ -257,6 +259,14 @@ class SQLiteRunStore:
             );
             """
         )
+        invocation_columns = {
+            row["name"] for row in self.connection.execute("PRAGMA table_info(invocations)")
+        }
+        if "normalized_version" not in invocation_columns:
+            with self.connection:
+                self.connection.execute(
+                    "ALTER TABLE invocations ADD COLUMN normalized_version INTEGER"
+                )
 
     def close(self) -> None:
         self.connection.close()
@@ -598,18 +608,25 @@ class SQLiteRunStore:
         return self._invocation(row)
 
     def finish_invocation(
-        self, invocation_id: str, *, result: Any = None, error: str | None = None
+        self,
+        invocation_id: str,
+        *,
+        result: Any = None,
+        error: str | None = None,
+        normalized_version: int | None = None,
     ) -> StoredInvocation:
         status = "FAILED" if error is not None else "SUCCEEDED"
         with self.connection:
             cursor = self.connection.execute(
-                "UPDATE invocations SET status=?,result_json=?,error=?,completed_at=? "
+                "UPDATE invocations SET status=?,result_json=?,error=?,completed_at=?,"
+                "normalized_version=? "
                 "WHERE invocation_id=? AND status='RUNNING'",
                 (
                     status,
                     None if error is not None else _json(result),
                     error,
                     datetime.now(UTC).isoformat(),
+                    normalized_version,
                     invocation_id,
                 ),
             )
@@ -637,6 +654,7 @@ class SQLiteRunStore:
             result,
             row["error"],
             replayed,
+            row["normalized_version"],
         )
 
     def emit_audit(self, event: Any) -> None:

@@ -22,6 +22,7 @@ from agent_runtime import (
     ValidationService,
     WorkspaceManager,
 )
+from agent_runtime.evaluation import GoldenTask, evaluate
 from agent_runtime.providers import ScriptedProvider
 from agent_runtime.publication import GitHubError
 from agent_runtime.reporting import JiraWriteError
@@ -178,20 +179,24 @@ def git(path: Path, *args: str) -> str:
 
 
 def test_real_services_execute_story_to_approved_pr_and_report_once(tmp_path):
+    task = GoldenTask.load("tests/fixtures/golden/add_greeting.json")
     repository = tmp_path / "repository"
     repository.mkdir()
     git(repository, "init", "-q")
     git(repository, "config", "user.email", "test@example.test")
     git(repository, "config", "user.name", "Test")
-    (repository / "greeting.txt").write_text("hello\n")
+    for path, content in task.repository.items():
+        target = repository / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content)
     git(repository, "add", ".")
     git(repository, "commit", "-qm", "base")
     revision = git(repository, "rev-parse", "HEAD")
     story_hash = hashlib.sha256(b"story").hexdigest()
     snapshot = StorySnapshot(
-        "JIRA-101",
-        "Add deterministic greeting",
-        "Change greeting.txt to hello world.",
+        task.task_id,
+        task.jira["summary"],
+        task.jira["description"],
         "Open",
         "Story",
         "2026-08-03T00:00:00Z",
@@ -303,7 +308,10 @@ def test_real_services_execute_story_to_approved_pr_and_report_once(tmp_path):
             manager,
             active_store,
             Sandbox(),
-            (ValidationProfile("unit", "test", ("trusted-unit",)),),
+            tuple(
+                ValidationProfile(name, "lint" if name == "lint" else "test", (f"trusted-{name}",))
+                for name in task.required_validations
+            ),
         )
         publication = PublicationService(
             active_store,
@@ -416,6 +424,24 @@ def test_real_services_execute_story_to_approved_pr_and_report_once(tmp_path):
     assert jira_write.create_attempts == 1
     assert github.published_files == {"greeting.txt": b"hello world\n"}
     assert "https://github.test/pr/101" in jira_write.body
+
+    workspace_diff = manager.diff("RUN-E2E")
+    workspace = manager.acquire("RUN-E2E")
+    _, generation = manager._generation(workspace)
+    changed_files = {
+        path: (generation / path).read_text() for path in workspace_diff["changed_files"]
+    }
+    checkpoint = store.connection.execute(
+        "SELECT results_json FROM validation_checkpoints "
+        "WHERE run_id='RUN-E2E' ORDER BY attempt DESC LIMIT 1"
+    ).fetchone()
+    import json
+
+    validations = {
+        result["profile_id"]: result["passed"] for result in json.loads(checkpoint["results_json"])
+    }
+    evaluation = evaluate(task, changed_files, validations)
+    assert evaluation.success and evaluation.quality_score == 100
 
     terminal = coding_agent.advance("RUN-E2E", "JIRA-101", (), lambda _attempt: (0, 0, 0.0))
     assert terminal.state == RunState.SUCCEEDED

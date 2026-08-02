@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import math
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
@@ -9,10 +12,10 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 if TYPE_CHECKING:
-    from agent_runtime.durable import SQLiteRunStore
+    from agent_runtime.durable import ArtifactStore, SQLiteRunStore
     from agent_runtime.metrics import MetricsSink
 
-from agent_runtime.metrics import MetricEvent, emit_metric
+from agent_runtime.metrics import MetricEvent, RedactionPolicy, emit_metric, redact_sensitive_text
 
 
 class PolicyDecision(StrEnum):
@@ -166,6 +169,99 @@ class GatewayError(RuntimeError):
         self.code = code
 
 
+@dataclass(frozen=True, slots=True)
+class GatewayOutputPolicy:
+    """Bounds and redacts every capability result before persistence or model exposure."""
+
+    inline_bytes: int = 32 * 1024
+    artifact_bytes: int = 1024 * 1024
+    redaction: RedactionPolicy = field(
+        default_factory=lambda: RedactionPolicy(
+            max_depth=10, max_items=128, max_string=16 * 1024, max_nodes=256
+        )
+    )
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.inline_bytes, int)
+            or isinstance(self.inline_bytes, bool)
+            or not isinstance(self.artifact_bytes, int)
+            or isinstance(self.artifact_bytes, bool)
+            or self.inline_bytes < 256
+            or self.artifact_bytes < self.inline_bytes
+        ):
+            raise ValueError("gateway output bounds are invalid")
+
+    def normalize(self, value: Any, artifacts: ArtifactStore | None = None) -> Any:
+        redacted = self._redact(to_jsonable(value), depth=0, budget=[100_000])
+        encoded = json.dumps(
+            redacted, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode()
+        if len(encoded) <= self.inline_bytes:
+            return redacted
+        digest = hashlib.sha256(encoded).hexdigest()
+        result: dict[str, Any] = {
+            "truncated": True,
+            "redacted_bytes": len(encoded),
+        }
+        if artifacts is not None and len(encoded) <= self.artifact_bytes:
+            result["artifact_sha256"] = artifacts.put(encoded)
+        else:
+            result["content_sha256"] = digest
+        text = encoded.decode()
+        low, high = 0, len(text)
+        while low < high:
+            middle = (low + high + 1) // 2
+            candidate = result | {"json_prefix": text[:middle]}
+            if len(self._encode(candidate)) <= self.inline_bytes:
+                low = middle
+            else:
+                high = middle - 1
+        if low:
+            result["json_prefix"] = text[:low]
+        if len(self._encode(result)) > self.inline_bytes:  # pragma: no cover - constructor floor
+            raise ValueError("gateway output envelope exceeds its configured bound")
+        return result
+
+    @staticmethod
+    def _encode(value: Any) -> bytes:
+        return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+
+    def _redact(self, value: Any, *, depth: int, budget: list[int]) -> Any:
+        if depth > 64 or budget[0] <= 0:
+            raise ValueError("capability output is too deeply nested or complex")
+        budget[0] -= 1
+        if isinstance(value, Mapping):
+            result = {}
+            for key, item in value.items():
+                if not isinstance(key, str):
+                    raise TypeError("capability output keys must be strings")
+                safe_key = redact_sensitive_text(key)
+                if safe_key in result:
+                    raise ValueError("capability output keys collide after redaction")
+                result[safe_key] = (
+                    "[REDACTED]"
+                    if self.redaction.sensitive(key)
+                    else self._redact(item, depth=depth + 1, budget=budget)
+                )
+            return result
+        if isinstance(value, (tuple, list)):
+            return [self._redact(item, depth=depth + 1, budget=budget) for item in value]
+        if isinstance(value, str):
+            return redact_sensitive_text(value)
+        if value is None or isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            if not math.isfinite(value):
+                raise ValueError("capability output numbers must be finite")
+            return value
+        raise ValueError("capability output must contain only JSON values")
+
+    @staticmethod
+    def safe_error(_error: Exception) -> str:
+        return "capability execution failed"
+
+
 def _validate(value: Any, schema: Mapping[str, Any], path: str = "arguments") -> None:
     expected = schema.get("type")
     types: dict[str, type | tuple[type, ...]] = {
@@ -199,6 +295,8 @@ def _validate(value: Any, schema: Mapping[str, Any], path: str = "arguments") ->
 
 
 class CapabilityGateway:
+    OUTPUT_NORMALIZATION_VERSION = 1
+
     def __init__(
         self,
         catalog: InMemoryCapabilityCatalog,
@@ -208,10 +306,14 @@ class CapabilityGateway:
         store: SQLiteRunStore | None = None,
         *,
         metrics: MetricsSink | None = None,
+        output_policy: GatewayOutputPolicy | None = None,
+        artifacts: ArtifactStore | None = None,
     ) -> None:
         self.catalog, self.policy, self.audit, self.context = catalog, policy, audit, context
         self.store = store
         self.metrics = metrics
+        self.output_policy = output_policy or GatewayOutputPolicy()
+        self.artifacts = artifacts
         self._executions: dict[str, ExecutionRecord] = {}
 
     def _audit(self, outcome: str, operation: str, **kwargs: Any) -> None:
@@ -299,13 +401,20 @@ class CapabilityGateway:
             except Exception as error:
                 self._audit("failure", "invoke", capability_id=capability_id, detail=str(error))
                 raise GatewayError("run_unavailable", str(error)) from error
+            legacy = (
+                durable.status in {ExecutionStatus.SUCCEEDED, ExecutionStatus.FAILED}
+                and durable.normalized_version != self.OUTPUT_NORMALIZATION_VERSION
+                and durable.error != "interrupted before terminal result"
+            )
             record = ExecutionRecord(
                 durable.execution_id,
                 durable.invocation_id,
                 capability_id,
-                ExecutionStatus(durable.status),
-                durable.result,
-                durable.error,
+                ExecutionStatus.FAILED if legacy else ExecutionStatus(durable.status),
+                durable.result
+                if durable.normalized_version == self.OUTPUT_NORMALIZATION_VERSION
+                else None,
+                "legacy capability result is unavailable" if legacy else durable.error,
             )
             if durable.replayed:
                 if (
@@ -346,23 +455,34 @@ class CapabilityGateway:
             "attempt", "invoke", capability_id=capability_id, execution_id=record.execution_id
         )
         try:
-            record.result = capability.handler(arguments, self.context)
+            record.result = self.output_policy.normalize(
+                capability.handler(arguments, self.context), self.artifacts
+            )
             record.status = ExecutionStatus.SUCCEEDED
             if self.store is not None:
-                self.store.finish_invocation(record.invocation_id, result=record.result)
+                self.store.finish_invocation(
+                    record.invocation_id,
+                    result=record.result,
+                    normalized_version=self.OUTPUT_NORMALIZATION_VERSION,
+                )
             self._audit(
                 "success", "invoke", capability_id=capability_id, execution_id=record.execution_id
             )
         except Exception as error:  # noqa: BLE001 - capability failures become records
-            record.status, record.error = ExecutionStatus.FAILED, str(error)
+            safe_error = self.output_policy.safe_error(error)
+            record.status, record.error = ExecutionStatus.FAILED, safe_error
             if self.store is not None:
-                self.store.finish_invocation(record.invocation_id, error=str(error))
+                self.store.finish_invocation(
+                    record.invocation_id,
+                    error=safe_error,
+                    normalized_version=self.OUTPUT_NORMALIZATION_VERSION,
+                )
             self._audit(
                 "failure",
                 "invoke",
                 capability_id=capability_id,
                 execution_id=record.execution_id,
-                detail=str(error),
+                detail=safe_error,
             )
         emit_metric(
             self.metrics,
@@ -381,13 +501,20 @@ class CapabilityGateway:
         if record is None and self.store is not None:
             durable = self.store.invocation_by_execution(self.context.run_id, execution_id)
             if durable is not None:
+                legacy = (
+                    durable.status in {ExecutionStatus.SUCCEEDED, ExecutionStatus.FAILED}
+                    and durable.normalized_version != self.OUTPUT_NORMALIZATION_VERSION
+                    and durable.error != "interrupted before terminal result"
+                )
                 record = ExecutionRecord(
                     durable.execution_id,
                     durable.invocation_id,
                     durable.capability_id,
-                    ExecutionStatus(durable.status),
-                    durable.result,
-                    durable.error,
+                    ExecutionStatus.FAILED if legacy else ExecutionStatus(durable.status),
+                    durable.result
+                    if durable.normalized_version == self.OUTPUT_NORMALIZATION_VERSION
+                    else None,
+                    "legacy capability result is unavailable" if legacy else durable.error,
                 )
         if record is None:
             self._audit(

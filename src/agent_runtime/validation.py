@@ -22,7 +22,7 @@ from agent_runtime.gateway import (
     Effect,
     InvocationContext,
 )
-from agent_runtime.metrics import MetricEvent, MetricsSink, emit_metric
+from agent_runtime.metrics import MetricEvent, MetricsSink, emit_metric, redact_sensitive_text
 from agent_runtime.workspace import WorkspaceManager
 
 
@@ -189,13 +189,15 @@ class BubblewrapSandboxBackend:
                     time.sleep(0.02)
                 process.wait()
             raw_out, raw_err = stdout_path.read_bytes(), stderr_path.read_bytes()
-            full = raw_out + b"\n--- stderr ---\n" + raw_err
+            safe_out = redact_sensitive_text(raw_out.decode(errors="replace")).encode()
+            safe_err = redact_sensitive_text(raw_err.decode(errors="replace")).encode()
+            full = safe_out + b"\n--- stderr ---\n" + safe_err
             artifact = (
                 self.artifacts.put(full)
                 if self.artifacts
                 and (
-                    len(raw_out) > self.limits.output_bytes
-                    or len(raw_err) > self.limits.output_bytes
+                    len(safe_out) > self.limits.output_bytes
+                    or len(safe_err) > self.limits.output_bytes
                 )
                 else None
             )
@@ -204,10 +206,10 @@ class BubblewrapSandboxBackend:
                 profile.profile_id,
                 process.returncode == 0 and not timed_out and not cancelled,
                 process.returncode,
-                raw_out[:limit].decode(errors="replace"),
-                raw_err[:limit].decode(errors="replace"),
-                len(raw_out) > limit,
-                len(raw_err) > limit,
+                safe_out[:limit].decode(errors="replace"),
+                safe_err[:limit].decode(errors="replace"),
+                len(safe_out) > limit,
+                len(safe_err) > limit,
                 timed_out,
                 cancelled,
                 time.monotonic() - started,

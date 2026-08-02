@@ -23,6 +23,10 @@ and verification-driven execution.
 - Capability-aware model routing and deterministic scripted-provider tests.
 - Live OpenRouter smoke tests completed for `google/gemma-4-31b-it` and
   `minimax/minimax-m2.7` without storing credentials in the repository.
+- Backend-qualified vLLM request profiles now pin sampling, timeout, reasoning replay, parser,
+  and bounded extension behavior for Gemma-4-31B, MiniMax-M2.7, GLM-5.2, and Kimi-K3.
+- A checked-in opt-in live contract reproduces a complete gateway loop; all four target models
+  passed it against OpenRouter on 2026-08-02.
 
 ### Governed capability gateway
 
@@ -45,6 +49,10 @@ and verification-driven execution.
 - Bubblewrap-isolated validation profiles with network, environment, process, time, CPU, memory,
   and output controls.
 - Bounded implementation/correction loop driven by trusted validation results.
+- A runtime-owned `JiraCodingAgentWorkflow` now composes intake, planning, implementation,
+  validation, approval/publication, and reporting from persisted state.
+- Fresh-process tests reconstruct the workflow across publication and JIRA reporting crash
+  windows without duplicate remote effects.
 
 ### Controlled external effects
 
@@ -67,12 +75,17 @@ and verification-driven execution.
 - Bounded recursive metric redaction, durable at-least-once batch export, pending-event retention,
   stable event IDs, and optional OpenTelemetry export.
 - Security audit records are retained indefinitely by the current local runtime.
+- The golden task is executed through the real workflow/services and scored from persisted
+  validation checkpoints and the resulting workspace, rather than by editing an in-memory dict.
+- Gateway outputs are recursively credential-redacted, byte-bounded, artifact-spilled, and
+  normalization-versioned before model exposure or durable persistence; legacy raw results are
+  refused on replay.
 
 ### Current verification baseline
 
-- `95 passed, 1 skipped` in the complete test suite.
+- `151 passed, 2 skipped` in the complete test suite.
 - Ruff lint and formatting checks pass.
-- The skipped test is an optional live/integration-style check, not a unit-test failure.
+- The skipped tests are opt-in live JIRA and OpenRouter checks, not unit-test failures.
 
 ## Pending — Next Product Phases
 
@@ -96,7 +109,9 @@ and verification-driven execution.
 
 ### Phase 13 — Local and hybrid execution profiles
 
-- Add explicit local-vLLM and hybrid frontier/local profiles without changing workflow contracts.
+- Done: explicit local-vLLM request profiles for the four target models without changing workflow
+  contracts.
+- Pending: deployment-level hybrid frontier/local routing profiles.
 - Support quality-triggered compaction and a separately configured summarization model.
 - Keep subagent depth shallow; use subagents for bounded perception work and deterministic code for
   aggregation.
