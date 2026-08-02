@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from agent_runtime.errors import ModelRoutingError
 from agent_runtime.models import ModelCapabilities
 from agent_runtime.providers.base import Provider
 
@@ -37,7 +38,7 @@ class ModelRouter:
             and (not requirements.streaming or deployment.capabilities.supports_streaming)
         ]
         if not candidates:
-            raise LookupError("no model deployment satisfies the routing requirements")
+            raise ModelRoutingError("no model deployment satisfies the routing requirements")
         return min(candidates, key=self._sort_key)
 
     @staticmethod

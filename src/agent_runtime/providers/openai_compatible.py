@@ -4,7 +4,8 @@ from typing import Any, Self
 
 import httpx
 
-from agent_runtime.models import ChatRequest, ChatResponse, Usage
+from agent_runtime.errors import IncompleteModelOutputError, InvalidModelOutputError
+from agent_runtime.models import ChatRequest, ChatResponse, ToolCall, Usage
 
 
 class OpenAICompatibleProvider:
@@ -45,7 +46,7 @@ class OpenAICompatibleProvider:
         if request.max_tokens is not None:
             payload["max_tokens"] = request.max_tokens
         if request.tools:
-            payload["tools"] = list(request.tools)
+            payload["tools"] = [tool.to_dict() for tool in request.tools]
 
         response = self._client.post("chat/completions", json=payload)
         response.raise_for_status()
@@ -69,22 +70,52 @@ class OpenAICompatibleProvider:
     def _parse_response(self, data: dict[str, Any], *, fallback_model: str) -> ChatResponse:
         choices = data.get("choices") or []
         if not choices:
-            raise ValueError(f"{self.name} returned no completion choices")
+            raise InvalidModelOutputError(f"{self.name} returned no completion choices")
 
         choice = choices[0]
+        if not isinstance(choice, dict):
+            raise InvalidModelOutputError(f"{self.name} returned an invalid completion choice")
         message = choice.get("message") or {}
+        if not isinstance(message, dict):
+            raise InvalidModelOutputError(f"{self.name} returned an invalid completion message")
+        tool_calls = self._parse_tool_calls(message.get("tool_calls") or ())
+        content = message.get("content") or ""
+        finish_reason = choice.get("finish_reason")
+        if finish_reason == "length" and not content and not tool_calls:
+            raise IncompleteModelOutputError(
+                f"{self.name} exhausted its output budget before producing a response"
+            )
         usage = data.get("usage") or {}
         return ChatResponse(
-            content=message.get("content") or "",
+            content=content,
             model=data.get("model") or fallback_model,
             provider=self.name,
-            finish_reason=choice.get("finish_reason"),
+            finish_reason=finish_reason,
             reasoning=message.get("reasoning") or message.get("reasoning_content"),
             reasoning_details=tuple(message.get("reasoning_details") or ()),
             usage=Usage(
                 input_tokens=usage.get("prompt_tokens", 0),
                 output_tokens=usage.get("completion_tokens", 0),
             ),
-            tool_calls=tuple(message.get("tool_calls") or ()),
+            tool_calls=tool_calls,
             raw=data,
         )
+
+    def _parse_tool_calls(self, values: object) -> tuple[ToolCall, ...]:
+        if not isinstance(values, (list, tuple)):
+            raise InvalidModelOutputError(f"{self.name} returned invalid tool_calls")
+
+        tool_calls = []
+        for value in values:
+            if not isinstance(value, dict) or not isinstance(value.get("function"), dict):
+                raise InvalidModelOutputError(f"{self.name} returned an invalid tool call")
+            function = value["function"]
+            identifier = value.get("id")
+            name = function.get("name")
+            arguments = function.get("arguments")
+            if not all(isinstance(item, str) and item for item in (identifier, name)):
+                raise InvalidModelOutputError(f"{self.name} returned an incomplete tool call")
+            if not isinstance(arguments, str):
+                raise InvalidModelOutputError(f"{self.name} returned non-string tool arguments")
+            tool_calls.append(ToolCall(id=identifier, name=name, arguments=arguments))
+        return tuple(tool_calls)

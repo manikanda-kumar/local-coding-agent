@@ -339,7 +339,7 @@ working directory or subprocess wrapper.
 
 Status values: `[ ]` pending, `[>]` active, `[x]` complete.
 
-## Phase 0 — Model tool-call contract `[>]`
+## Phase 0 — Model tool-call contract `[x]`
 
 Goal: support a deterministic multi-turn model/tool loop before implementing the gateway.
 
@@ -361,7 +361,7 @@ Acceptance criteria:
 - Routing cannot select a model without tool support for a tool-required stage.
 - Existing OpenRouter and MiniMax reasoning behavior remains covered.
 
-## Phase 1 — Read-only gateway walking skeleton `[ ]`
+## Phase 1 — Read-only gateway walking skeleton `[>]`
 
 Goal: complete one model-to-gateway loop without external systems or write capabilities.
 
