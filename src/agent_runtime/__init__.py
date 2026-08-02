@@ -9,6 +9,7 @@ from agent_runtime.durable import (
     RunState,
     SQLiteRunStore,
     StoredInvocation,
+    StoredStorySnapshot,
     invocation_identity,
 )
 from agent_runtime.errors import (
@@ -34,6 +35,14 @@ from agent_runtime.gateway import (
     StaticPolicyEngine,
     fixture_read_capability,
 )
+from agent_runtime.jira import (
+    Comment,
+    JiraAuth,
+    JiraReadAdapter,
+    JiraReadError,
+    StorySnapshot,
+    jira_read_capabilities,
+)
 from agent_runtime.models import (
     ChatMessage,
     ChatRequest,
@@ -44,6 +53,7 @@ from agent_runtime.models import (
     ToolResult,
     Usage,
 )
+from agent_runtime.planning import IncompletePlanError, IntakePlanningService, StoryChangedError
 from agent_runtime.routing import ModelDeployment, ModelRouter, RoutingRequirements
 from agent_runtime.runner import GATEWAY_TOOLS, AgentRunner
 
@@ -59,6 +69,7 @@ __all__ = [
     "ChatMessage",
     "ChatRequest",
     "ChatResponse",
+    "Comment",
     "DurableAuditSink",
     "ExecutionRecord",
     "ExecutionStatus",
@@ -66,9 +77,14 @@ __all__ = [
     "InMemoryAuditSink",
     "InMemoryCapabilityCatalog",
     "IncompleteModelOutputError",
+    "IncompletePlanError",
+    "IntakePlanningService",
     "InvalidModelOutputError",
     "InvalidTransition",
     "InvocationContext",
+    "JiraAuth",
+    "JiraReadAdapter",
+    "JiraReadError",
     "ModelCapabilities",
     "ModelDeployment",
     "ModelOutputError",
@@ -82,6 +98,9 @@ __all__ = [
     "SQLiteRunStore",
     "StaticPolicyEngine",
     "StoredInvocation",
+    "StoredStorySnapshot",
+    "StoryChangedError",
+    "StorySnapshot",
     "ToolArgumentsError",
     "ToolCall",
     "ToolDefinition",
@@ -89,4 +108,5 @@ __all__ = [
     "Usage",
     "fixture_read_capability",
     "invocation_identity",
+    "jira_read_capabilities",
 ]

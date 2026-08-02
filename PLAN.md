@@ -404,7 +404,7 @@ Acceptance criteria:
 - Cancellation prevents new work.
 - Model and policy selection are pinned per checkpoint.
 
-## Phase 3 — JIRA intake and planning `[>]`
+## Phase 3 — JIRA intake and planning `[x]`
 
 Goal: turn a real, read-only JIRA story into a persisted implementation plan.
 
@@ -424,7 +424,7 @@ Acceptance criteria:
 - Story changes require an explicit refresh and replan decision.
 - Truncated or empty model output cannot become a successful plan.
 
-## Phase 4 — Read-only repository intelligence over MCP `[ ]`
+## Phase 4 — Read-only repository intelligence over MCP `[>]`
 
 Goal: analyze a repository using approved internal MCP capabilities without exposing MCP directly.
 

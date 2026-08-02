@@ -78,6 +78,15 @@ class StoredInvocation:
     replayed: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class StoredStorySnapshot:
+    run_id: str
+    revision: int
+    content_hash: str
+    snapshot: dict[str, Any]
+    active: bool
+
+
 def _json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
@@ -158,6 +167,20 @@ class SQLiteRunStore:
               event_id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(run_id),
               timestamp TEXT NOT NULL, outcome TEXT NOT NULL, operation TEXT NOT NULL,
               capability_id TEXT, execution_id TEXT, detail TEXT
+            );
+            CREATE TABLE IF NOT EXISTS story_snapshots (
+              run_id TEXT NOT NULL REFERENCES runs(run_id), revision INTEGER NOT NULL,
+              content_hash TEXT NOT NULL, snapshot_json TEXT NOT NULL, active INTEGER NOT NULL,
+              created_at TEXT NOT NULL, PRIMARY KEY(run_id, revision),
+              UNIQUE(run_id, content_hash)
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS one_active_story_snapshot
+              ON story_snapshots(run_id) WHERE active=1;
+            CREATE TABLE IF NOT EXISTS plans (
+              run_id TEXT NOT NULL REFERENCES runs(run_id), story_revision INTEGER NOT NULL,
+              content TEXT NOT NULL, created_at TEXT NOT NULL,
+              PRIMARY KEY(run_id, story_revision),
+              FOREIGN KEY(run_id, story_revision) REFERENCES story_snapshots(run_id, revision)
             );
             """
         )
@@ -260,6 +283,87 @@ class SQLiteRunStore:
         if row is None:
             raise KeyError(run_id)
         return row
+
+    def save_story_snapshot(
+        self, run_id: str, content_hash: str, snapshot: Mapping[str, Any], *, activate: bool = True
+    ) -> StoredStorySnapshot:
+        """Append an immutable revision; identical content reuses its existing revision."""
+        existing = self.connection.execute(
+            "SELECT * FROM story_snapshots WHERE run_id=? AND content_hash=?",
+            (run_id, content_hash),
+        ).fetchone()
+        if existing is not None:
+            if activate and not existing["active"]:
+                with self.connection:
+                    self.connection.execute(
+                        "UPDATE story_snapshots SET active=0 WHERE run_id=?", (run_id,)
+                    )
+                    self.connection.execute(
+                        "UPDATE story_snapshots SET active=1 WHERE run_id=? AND revision=?",
+                        (run_id, existing["revision"]),
+                    )
+            return self.story_snapshot(run_id, existing["revision"])
+        row = self.connection.execute(
+            "SELECT COALESCE(MAX(revision),0)+1 FROM story_snapshots WHERE run_id=?", (run_id,)
+        ).fetchone()
+        revision = row[0]
+        with self.connection:
+            if activate:
+                self.connection.execute(
+                    "UPDATE story_snapshots SET active=0 WHERE run_id=?", (run_id,)
+                )
+            self.connection.execute(
+                "INSERT INTO story_snapshots VALUES (?,?,?,?,?,?)",
+                (
+                    run_id,
+                    revision,
+                    content_hash,
+                    _json(snapshot),
+                    int(activate),
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
+            if activate:
+                self.connection.execute(
+                    "UPDATE runs SET story_hash=? WHERE run_id=?", (content_hash, run_id)
+                )
+        return self.story_snapshot(run_id, revision)
+
+    def story_snapshot(self, run_id: str, revision: int | None = None) -> StoredStorySnapshot:
+        if revision is None:
+            row = self.connection.execute(
+                "SELECT * FROM story_snapshots WHERE run_id=? AND active=1", (run_id,)
+            ).fetchone()
+        else:
+            row = self.connection.execute(
+                "SELECT * FROM story_snapshots WHERE run_id=? AND revision=?", (run_id, revision)
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"no story snapshot for run {run_id}")
+        return StoredStorySnapshot(
+            row["run_id"],
+            row["revision"],
+            row["content_hash"],
+            json.loads(row["snapshot_json"]),
+            bool(row["active"]),
+        )
+
+    def save_plan(self, run_id: str, revision: int, content: str) -> None:
+        with self.connection:
+            self.connection.execute(
+                "INSERT OR IGNORE INTO plans VALUES (?,?,?,?)",
+                (run_id, revision, content, datetime.now(UTC).isoformat()),
+            )
+
+    def plan(self, run_id: str, revision: int | None = None) -> str:
+        snapshot = self.story_snapshot(run_id, revision)
+        row = self.connection.execute(
+            "SELECT content FROM plans WHERE run_id=? AND story_revision=?",
+            (run_id, snapshot.revision),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"no plan for run {run_id} revision {snapshot.revision}")
+        return row[0]
 
     def begin_invocation(
         self, run_id: str, step: str, capability_id: str, arguments: Mapping[str, Any]
