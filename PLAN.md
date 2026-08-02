@@ -485,7 +485,7 @@ Acceptance criteria:
 - Timeout and cancellation terminate descendant processes.
 - Validation cannot pass to publication without required checks or an approved exception.
 
-## Phase 7 — Approval and pull-request publication `[>]`
+## Phase 7 — Approval and pull-request publication `[x]`
 
 Goal: safely perform the first irreversible external effect.
 
@@ -506,7 +506,7 @@ Acceptance criteria:
 - Timeout after remote creation reconciles to the existing pull request.
 - Base drift stops publication or requires explicit rebase and revalidation.
 
-## Phase 8 — JIRA reporting `[ ]`
+## Phase 8 — JIRA reporting `[>]`
 
 Goal: report a successful run without duplicate or unsafe workflow mutations.
 

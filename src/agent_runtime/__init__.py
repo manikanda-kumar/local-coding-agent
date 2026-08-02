@@ -64,6 +64,16 @@ from agent_runtime.models import (
     Usage,
 )
 from agent_runtime.planning import IncompletePlanError, IntakePlanningService, StoryChangedError
+from agent_runtime.publication import (
+    ApprovalBinding,
+    GitHubAdapter,
+    GitHubCredentials,
+    GitHubError,
+    GitHubTimeout,
+    PublicationDenied,
+    PublicationResult,
+    PublicationService,
+)
 from agent_runtime.repository import (
     RepositorySnapshot,
     RepositorySnapshotError,
@@ -94,6 +104,7 @@ from agent_runtime.workspace import (
 __all__ = [
     "GATEWAY_TOOLS",
     "AgentRunner",
+    "ApprovalBinding",
     "ArtifactStore",
     "AuditEvent",
     "BubblewrapSandboxBackend",
@@ -111,6 +122,10 @@ __all__ = [
     "ExecutionRecord",
     "ExecutionStatus",
     "GatewayError",
+    "GitHubAdapter",
+    "GitHubCredentials",
+    "GitHubError",
+    "GitHubTimeout",
     "ImplementationValidationCoordinator",
     "InMemoryAuditSink",
     "InMemoryCapabilityCatalog",
@@ -132,6 +147,9 @@ __all__ = [
     "ModelRouter",
     "ModelRoutingError",
     "PolicyDecision",
+    "PublicationDenied",
+    "PublicationResult",
+    "PublicationService",
     "RepositorySnapshot",
     "RepositorySnapshotError",
     "RepositorySnapshotProvider",

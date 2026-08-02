@@ -216,6 +216,22 @@ class SQLiteRunStore:
               attempt INTEGER NOT NULL, passed INTEGER NOT NULL, results_json TEXT NOT NULL,
               created_at TEXT NOT NULL, UNIQUE(run_id,attempt)
             );
+            CREATE TABLE IF NOT EXISTS publish_approvals (
+              approval_id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(run_id),
+              story_hash TEXT NOT NULL, story_revision INTEGER NOT NULL,
+              repository TEXT NOT NULL, base_revision TEXT NOT NULL,
+              workspace_generation INTEGER NOT NULL, diff_digest TEXT NOT NULL,
+              capability TEXT NOT NULL, action TEXT NOT NULL, target_branch TEXT NOT NULL,
+              target_account TEXT NOT NULL, title TEXT NOT NULL, policy_version TEXT NOT NULL,
+              approver TEXT NOT NULL, expires_at TEXT NOT NULL, action_digest TEXT NOT NULL UNIQUE,
+              status TEXT NOT NULL, created_at TEXT NOT NULL, approved_at TEXT, consumed_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS publication_outbox (
+              run_id TEXT PRIMARY KEY REFERENCES runs(run_id), approval_id TEXT NOT NULL UNIQUE
+                REFERENCES publish_approvals(approval_id), action_digest TEXT NOT NULL,
+              branch TEXT NOT NULL, status TEXT NOT NULL, intent_json TEXT NOT NULL,
+              remote_json TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+            );
             """
         )
 
