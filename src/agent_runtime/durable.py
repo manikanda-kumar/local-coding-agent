@@ -244,11 +244,55 @@ class SQLiteRunStore:
               approver TEXT NOT NULL, expires_at TEXT NOT NULL, binding_digest TEXT NOT NULL UNIQUE,
               status TEXT NOT NULL, created_at TEXT NOT NULL, approved_at TEXT, consumed_at TEXT
             );
+            CREATE TABLE IF NOT EXISTS run_skill_pins (
+              run_id TEXT PRIMARY KEY REFERENCES runs(run_id), skill_id TEXT NOT NULL,
+              version TEXT NOT NULL, content_sha256 TEXT NOT NULL, signature BLOB NOT NULL,
+              signer_id TEXT NOT NULL, pinned_at TEXT NOT NULL
+            );
             """
         )
 
     def close(self) -> None:
         self.connection.close()
+
+    def pin_skill(self, run_id: str, package: Any) -> None:
+        """Persist the complete verified identity; an existing pin is immutable."""
+        from agent_runtime.skills import SkillPin
+
+        pin = SkillPin.from_package(package)
+        with self.connection:
+            try:
+                self.connection.execute(
+                    "INSERT INTO run_skill_pins VALUES (?,?,?,?,?,?,?)",
+                    (
+                        run_id,
+                        pin.skill_id,
+                        pin.version,
+                        pin.content_sha256,
+                        pin.signature,
+                        pin.signer_id,
+                        datetime.now(UTC).isoformat(),
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                if self.skill_pin(run_id) != pin:
+                    raise ValueError("run already has a different immutable skill pin") from exc
+
+    def skill_pin(self, run_id: str) -> Any:
+        from agent_runtime.skills import SkillPin
+
+        row = self.connection.execute(
+            "SELECT * FROM run_skill_pins WHERE run_id=?", (run_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        return SkillPin(
+            row["skill_id"],
+            row["version"],
+            row["content_sha256"],
+            bytes(row["signature"]),
+            row["signer_id"],
+        )
 
     def create_run(
         self,

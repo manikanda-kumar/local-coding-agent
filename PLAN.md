@@ -524,7 +524,7 @@ Acceptance criteria:
 - Reporting failure leaves the run resumable rather than falsely successful.
 - Failure reporting cannot transition a story to Done.
 
-## Phase 9 — Signed internal skills `[>]`
+## Phase 9 — Signed internal skills `[x]`
 
 Goal: add reusable orchestration only after the code-owned workflow is proven.
 
@@ -543,7 +543,7 @@ Acceptance criteria:
 - Skills cannot execute code, install packages, select endpoints, or access raw secrets.
 - Resume uses the exact pinned skill content.
 
-## Phase 10 — Evaluation and operational hardening `[ ]`
+## Phase 10 — Evaluation and operational hardening `[>]`
 
 Goal: measure reliability and prepare for production based on observed needs.
 
