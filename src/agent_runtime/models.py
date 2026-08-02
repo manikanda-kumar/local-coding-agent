@@ -47,6 +47,8 @@ class ChatResponse:
     model: str
     provider: str
     finish_reason: str | None = None
+    reasoning: str | None = None
+    reasoning_details: tuple[dict[str, Any], ...] = ()
     usage: Usage = Usage()
     tool_calls: tuple[dict[str, Any], ...] = ()
     raw: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)

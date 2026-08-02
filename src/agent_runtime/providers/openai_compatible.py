@@ -79,6 +79,8 @@ class OpenAICompatibleProvider:
             model=data.get("model") or fallback_model,
             provider=self.name,
             finish_reason=choice.get("finish_reason"),
+            reasoning=message.get("reasoning") or message.get("reasoning_content"),
+            reasoning_details=tuple(message.get("reasoning_details") or ()),
             usage=Usage(
                 input_tokens=usage.get("prompt_tokens", 0),
                 output_tokens=usage.get("completion_tokens", 0),

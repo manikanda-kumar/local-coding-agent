@@ -18,7 +18,14 @@ def test_chat_uses_openai_contract_and_normalizes_response() -> None:
             json={
                 "model": "gemma4-31b",
                 "choices": [
-                    {"message": {"content": "Hi"}, "finish_reason": "stop"},
+                    {
+                        "message": {
+                            "content": "Hi",
+                            "reasoning": "A short greeting is appropriate.",
+                            "reasoning_details": [{"type": "reasoning.text", "text": "..."}],
+                        },
+                        "finish_reason": "stop",
+                    },
                 ],
                 "usage": {"prompt_tokens": 3, "completion_tokens": 1},
             },
@@ -41,6 +48,8 @@ def test_chat_uses_openai_contract_and_normalizes_response() -> None:
 
     assert response.content == "Hi"
     assert response.provider == "local-vllm"
+    assert response.reasoning == "A short greeting is appropriate."
+    assert response.reasoning_details[0]["type"] == "reasoning.text"
     assert response.usage.total_tokens == 4
 
 
