@@ -40,6 +40,7 @@ def run_store(tmp_path, state=RunState.NEW):
         model="model",
         prompt_version="v1",
         policy_version="v1",
+        profile_id="gemma-4-31b-it-vllm",
     )
     flow = [
         RunState.INTAKE,
@@ -296,6 +297,7 @@ def test_real_services_execute_story_to_approved_pr_and_report_once(tmp_path):
         model="model",
         prompt_version="v1",
         policy_version="v1",
+        profile_id="gemma-4-31b-it-vllm",
     )
     planning_provider = ScriptedProvider(
         (ChatResponse("Update greeting.txt and run unit validation.", "model", "scripted"),)

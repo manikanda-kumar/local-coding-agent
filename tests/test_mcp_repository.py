@@ -214,6 +214,7 @@ def test_mcp_evidence_is_persisted_into_story_plan(tmp_path):
         model="model",
         prompt_version="v1",
         policy_version="v1",
+        profile_id="gemma-4-31b-it-vllm",
     )
     jira = JiraReadAdapter(
         "https://jira.example.test",

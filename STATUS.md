@@ -83,7 +83,7 @@ and verification-driven execution.
 
 ### Current verification baseline
 
-- `170 passed, 2 skipped` in the complete test suite.
+- `175 passed, 2 skipped` in the complete test suite.
 - Ruff lint and formatting checks pass.
 - The skipped tests are opt-in live JIRA and OpenRouter checks, not unit-test failures.
 
@@ -126,10 +126,9 @@ and verification-driven execution.
 ### Phase 14 — Resume packets and knowledge routing
 
 - Done (primitive): bounded resume packets and tagged deterministic knowledge routing are available.
-- Pending: wire resume-packet and composed-context consumption into the production workflow; until
-  then the workflow does not claim enforcement of these pins at model-call boundaries.
-- Ensure the integrated resumed workflow consumes the same story, repository revision, policy,
-  model profile, skill, and workspace generation pins.
+- Done (planning): new and resumed planning calls consume a current resume packet and composed
+  context, fail closed on provider/prompt/policy/profile drift, and budget the complete request.
+- Pending: build the implementation model loop and enforce the same pins at each model-call boundary.
 
 ### Phase 15 — End-to-end JIRA-story dogfooding
 
