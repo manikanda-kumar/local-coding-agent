@@ -43,6 +43,15 @@ from agent_runtime.jira import (
     StorySnapshot,
     jira_read_capabilities,
 )
+from agent_runtime.mcp import (
+    MCPAllowlistAdapter,
+    MCPCredentials,
+    MCPFailure,
+    ReviewedToolMapping,
+    StreamableHTTPTransport,
+    canonical_schema_hash,
+    redact_untrusted,
+)
 from agent_runtime.models import (
     ChatMessage,
     ChatRequest,
@@ -54,6 +63,11 @@ from agent_runtime.models import (
     Usage,
 )
 from agent_runtime.planning import IncompletePlanError, IntakePlanningService, StoryChangedError
+from agent_runtime.repository import (
+    RepositorySnapshot,
+    RepositorySnapshotError,
+    RepositorySnapshotProvider,
+)
 from agent_runtime.routing import ModelDeployment, ModelRouter, RoutingRequirements
 from agent_runtime.runner import GATEWAY_TOOLS, AgentRunner
 
@@ -85,12 +99,19 @@ __all__ = [
     "JiraAuth",
     "JiraReadAdapter",
     "JiraReadError",
+    "MCPAllowlistAdapter",
+    "MCPCredentials",
+    "MCPFailure",
     "ModelCapabilities",
     "ModelDeployment",
     "ModelOutputError",
     "ModelRouter",
     "ModelRoutingError",
     "PolicyDecision",
+    "RepositorySnapshot",
+    "RepositorySnapshotError",
+    "RepositorySnapshotProvider",
+    "ReviewedToolMapping",
     "RoutingRequirements",
     "RunCancelled",
     "RunRecord",
@@ -101,12 +122,15 @@ __all__ = [
     "StoredStorySnapshot",
     "StoryChangedError",
     "StorySnapshot",
+    "StreamableHTTPTransport",
     "ToolArgumentsError",
     "ToolCall",
     "ToolDefinition",
     "ToolResult",
     "Usage",
+    "canonical_schema_hash",
     "fixture_read_capability",
     "invocation_identity",
     "jira_read_capabilities",
+    "redact_untrusted",
 ]

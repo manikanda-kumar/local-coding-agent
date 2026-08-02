@@ -424,7 +424,7 @@ Acceptance criteria:
 - Story changes require an explicit refresh and replan decision.
 - Truncated or empty model output cannot become a successful plan.
 
-## Phase 4 — Read-only repository intelligence over MCP `[>]`
+## Phase 4 — Read-only repository intelligence over MCP `[x]`
 
 Goal: analyze a repository using approved internal MCP capabilities without exposing MCP directly.
 
@@ -444,7 +444,7 @@ Acceptance criteria:
 - Timeout, cancellation, malformed output, and oversized output are structured failures.
 - A fixture story reaches `PLAN_READY` with cited file and symbol evidence.
 
-## Phase 5 — Confined workspace edits `[ ]`
+## Phase 5 — Confined workspace edits `[>]`
 
 Goal: permit reversible edits without executing repository code.
 

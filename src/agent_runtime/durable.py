@@ -182,6 +182,12 @@ class SQLiteRunStore:
               PRIMARY KEY(run_id, story_revision),
               FOREIGN KEY(run_id, story_revision) REFERENCES story_snapshots(run_id, revision)
             );
+            CREATE TABLE IF NOT EXISTS analysis_evidence (
+              run_id TEXT NOT NULL REFERENCES runs(run_id), story_revision INTEGER NOT NULL,
+              evidence_json TEXT NOT NULL, created_at TEXT NOT NULL,
+              PRIMARY KEY(run_id, story_revision),
+              FOREIGN KEY(run_id, story_revision) REFERENCES story_snapshots(run_id, revision)
+            );
             """
         )
 
@@ -354,6 +360,33 @@ class SQLiteRunStore:
                 "INSERT OR IGNORE INTO plans VALUES (?,?,?,?)",
                 (run_id, revision, content, datetime.now(UTC).isoformat()),
             )
+
+    def save_analysis_evidence(
+        self, run_id: str, revision: int, evidence: tuple[Mapping[str, Any], ...]
+    ) -> None:
+        encoded = _json(evidence)
+        existing = self.connection.execute(
+            "SELECT evidence_json FROM analysis_evidence WHERE run_id=? AND story_revision=?",
+            (run_id, revision),
+        ).fetchone()
+        if existing is not None:
+            if existing[0] != encoded:
+                raise ValueError("analysis evidence is immutable for a story revision")
+            return
+        with self.connection:
+            self.connection.execute(
+                "INSERT INTO analysis_evidence VALUES (?,?,?,?)",
+                (run_id, revision, encoded, datetime.now(UTC).isoformat()),
+            )
+
+    def analysis_evidence(self, run_id: str, revision: int) -> tuple[dict[str, Any], ...]:
+        row = self.connection.execute(
+            "SELECT evidence_json FROM analysis_evidence WHERE run_id=? AND story_revision=?",
+            (run_id, revision),
+        ).fetchone()
+        if row is None:
+            return ()
+        return tuple(json.loads(row[0]))
 
     def plan(self, run_id: str, revision: int | None = None) -> str:
         snapshot = self.story_snapshot(run_id, revision)
