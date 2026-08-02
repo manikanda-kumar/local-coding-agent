@@ -10,6 +10,7 @@ from agent_runtime import (
     CapabilityDescriptor,
     CapabilityGateway,
     ChatResponse,
+    Effect,
     ExecutionStatus,
     GatewayError,
     InMemoryAuditSink,
@@ -57,6 +58,22 @@ def test_deny_by_default_hides_and_rechecks_guessed_capabilities() -> None:
         )
         == PolicyDecision.REQUIRE_APPROVAL
     )
+
+
+def test_catalog_rejects_unknown_and_mislabeled_workspace_effects() -> None:
+    schema = {"type": "object", "properties": {}, "additionalProperties": False}
+    for capability_id, effect in (
+        ("workspace.write", Effect.TRUSTED_WORKSPACE_WRITE),
+        ("workspace.patch.apply", Effect.TRUSTED_WORKSPACE_READ),
+        ("ordinary.read", Effect.TRUSTED_WORKSPACE_WRITE),
+        ("ordinary.unknown", "invented"),
+    ):
+        capability = Capability(
+            CapabilityDescriptor(CapabilityCard(capability_id, "x", "x"), schema, effect),
+            lambda _a, _c: None,
+        )
+        with pytest.raises(ValueError):
+            InMemoryCapabilityCatalog((capability,))
 
 
 def test_validation_rejects_unknown_and_runtime_owned_fields_and_audits() -> None:

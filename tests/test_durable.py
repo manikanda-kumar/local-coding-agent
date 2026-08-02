@@ -115,6 +115,17 @@ def test_completed_replay_does_not_execute_handler_again(tmp_path) -> None:
     assert replay.result == first.result
 
 
+def test_execution_lookup_is_run_scoped_and_preserves_capability(tmp_path) -> None:
+    store = SQLiteRunStore(tmp_path / "runs.db")
+    create_run(store, "one")
+    create_run(store, "two")
+    invocation = store.begin_invocation("one", "NEW", "fixture.read", {"key": "x"})
+    store.finish_invocation(invocation.invocation_id, result={"ok": True})
+    assert store.invocation_by_execution("two", invocation.execution_id) is None
+    found = store.invocation_by_execution("one", invocation.execution_id)
+    assert found is not None and found.capability_id == "fixture.read"
+
+
 def test_crash_after_intent_is_terminal_failure_not_false_success(tmp_path) -> None:
     path = tmp_path / "runs.db"
     store = SQLiteRunStore(path)
@@ -124,6 +135,7 @@ def test_crash_after_intent_is_terminal_failure_not_false_success(tmp_path) -> N
     store.close()  # simulate process death before result persistence
 
     restarted = SQLiteRunStore(path)
+    assert restarted.recover_running_invocations("run") == 1
     recovered = restarted.begin_invocation("run", "ANALYZE", "fixture.read", {"key": "x"})
     assert recovered.replayed
     assert recovered.status == "FAILED"

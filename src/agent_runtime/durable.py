@@ -73,6 +73,7 @@ class StoredInvocation:
     invocation_id: str
     execution_id: str
     status: str
+    capability_id: str = ""
     result: Any = None
     error: str | None = None
     replayed: bool = False
@@ -187,6 +188,22 @@ class SQLiteRunStore:
               evidence_json TEXT NOT NULL, created_at TEXT NOT NULL,
               PRIMARY KEY(run_id, story_revision),
               FOREIGN KEY(run_id, story_revision) REFERENCES story_snapshots(run_id, revision)
+            );
+            CREATE TABLE IF NOT EXISTS workspaces (
+              workspace_id TEXT PRIMARY KEY, run_id TEXT UNIQUE NOT NULL REFERENCES runs(run_id),
+              repository TEXT NOT NULL, base_revision TEXT NOT NULL, path TEXT UNIQUE NOT NULL,
+              created_at TEXT NOT NULL, current_generation INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS workspace_mutations (
+              mutation_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id),
+              sequence INTEGER NOT NULL, capability_id TEXT NOT NULL, arguments_json TEXT NOT NULL,
+              status TEXT NOT NULL, result_json TEXT, error TEXT, created_at TEXT NOT NULL,
+              completed_at TEXT, UNIQUE(workspace_id, sequence)
+            );
+            CREATE TABLE IF NOT EXISTS workspace_checkpoints (
+              id INTEGER PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id),
+              mutation_id TEXT NOT NULL REFERENCES workspace_mutations(mutation_id),
+              diff TEXT NOT NULL, changed_files_json TEXT NOT NULL, created_at TEXT NOT NULL
             );
             """
         )
@@ -411,16 +428,6 @@ class SQLiteRunStore:
             "SELECT * FROM invocations WHERE invocation_id=?", (identity,)
         ).fetchone()
         if existing is not None:
-            if existing["status"] == "RUNNING":
-                with self.connection:
-                    self.connection.execute(
-                        "UPDATE invocations SET status='FAILED',error='interrupted before terminal result',"
-                        "completed_at=? WHERE invocation_id=?",
-                        (datetime.now(UTC).isoformat(), identity),
-                    )
-                existing = self.connection.execute(
-                    "SELECT * FROM invocations WHERE invocation_id=?", (identity,)
-                ).fetchone()
             return self._invocation(existing, replayed=True)
         execution_id = hashlib.sha256(f"execution:{identity}".encode()).hexdigest()
         with self.connection:
@@ -438,7 +445,36 @@ class SQLiteRunStore:
                     datetime.now(UTC).isoformat(),
                 ),
             )
-        return StoredInvocation(identity, execution_id, "RUNNING")
+        return StoredInvocation(identity, execution_id, "RUNNING", capability_id)
+
+    def recover_running_invocations(self, run_id: str | None = None) -> int:
+        where = "status='RUNNING'"
+        parameters: tuple[Any, ...] = ()
+        if run_id is not None:
+            where += " AND run_id=?"
+            parameters = (run_id,)
+        with self.connection:
+            cursor = self.connection.execute(
+                f"UPDATE invocations SET status='FAILED',error='interrupted before terminal result',"
+                f"completed_at=? WHERE {where}",
+                (datetime.now(UTC).isoformat(), *parameters),
+            )
+        return cursor.rowcount
+
+    def restart_interrupted_invocation(self, invocation_id: str) -> StoredInvocation:
+        with self.connection:
+            cursor = self.connection.execute(
+                "UPDATE invocations SET status='RUNNING',error=NULL,completed_at=NULL "
+                "WHERE invocation_id=? AND status='FAILED' "
+                "AND error='interrupted before terminal result'",
+                (invocation_id,),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("invocation is not recoverable")
+        row = self.connection.execute(
+            "SELECT * FROM invocations WHERE invocation_id=?", (invocation_id,)
+        ).fetchone()
+        return self._invocation(row)
 
     def finish_invocation(
         self, invocation_id: str, *, result: Any = None, error: str | None = None
@@ -463,9 +499,9 @@ class SQLiteRunStore:
         ).fetchone()
         return self._invocation(row)
 
-    def invocation_by_execution(self, execution_id: str) -> StoredInvocation | None:
+    def invocation_by_execution(self, run_id: str, execution_id: str) -> StoredInvocation | None:
         row = self.connection.execute(
-            "SELECT * FROM invocations WHERE execution_id=?", (execution_id,)
+            "SELECT * FROM invocations WHERE run_id=? AND execution_id=?", (run_id, execution_id)
         ).fetchone()
         return None if row is None else self._invocation(row)
 
@@ -473,7 +509,13 @@ class SQLiteRunStore:
     def _invocation(row: sqlite3.Row, replayed: bool = False) -> StoredInvocation:
         result = json.loads(row["result_json"]) if row["result_json"] is not None else None
         return StoredInvocation(
-            row["invocation_id"], row["execution_id"], row["status"], result, row["error"], replayed
+            row["invocation_id"],
+            row["execution_id"],
+            row["status"],
+            row["capability_id"],
+            result,
+            row["error"],
+            replayed,
         )
 
     def emit_audit(self, event: Any) -> None:

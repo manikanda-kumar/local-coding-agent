@@ -24,6 +24,13 @@ class ExecutionStatus(StrEnum):
     CANCELLED = "CANCELLED"
 
 
+class Effect(StrEnum):
+    READ = "read"
+    TRUSTED_READ = "trusted_read"
+    TRUSTED_WORKSPACE_READ = "trusted_workspace_read"
+    TRUSTED_WORKSPACE_WRITE = "trusted_workspace_write"
+
+
 @dataclass(frozen=True, slots=True)
 class CapabilityCard:
     capability_id: str
@@ -36,7 +43,7 @@ class CapabilityCard:
 class CapabilityDescriptor:
     card: CapabilityCard
     input_schema: dict[str, Any]
-    effect: str = "read"
+    effect: Effect = Effect.TRUSTED_READ
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,7 +90,9 @@ class Capability:
 
 class InMemoryCapabilityCatalog:
     def __init__(self, capabilities: tuple[Capability, ...] = ()) -> None:
-        self._capabilities = {item.descriptor.card.capability_id: item for item in capabilities}
+        self._capabilities: dict[str, Capability] = {}
+        for item in capabilities:
+            self.register(item)
 
     def get(self, capability_id: str) -> Capability | None:
         return self._capabilities.get(capability_id)
@@ -92,6 +101,24 @@ class InMemoryCapabilityCatalog:
         return tuple(self._capabilities.values())
 
     def register(self, capability: Capability) -> None:
+        try:
+            effect = Effect(capability.descriptor.effect)
+        except ValueError as exc:
+            raise ValueError("unknown capability effect") from exc
+        capability_id = capability.descriptor.card.capability_id
+        reserved_effects = {
+            "workspace.patch.apply": Effect.TRUSTED_WORKSPACE_WRITE,
+            "workspace.file.create": Effect.TRUSTED_WORKSPACE_WRITE,
+            "git.diff.read": Effect.TRUSTED_WORKSPACE_READ,
+        }
+        reserved = capability_id.startswith(("workspace.", "git.diff."))
+        if reserved and reserved_effects.get(capability_id) != effect:
+            raise ValueError("reserved workspace capability has invalid effect or identifier")
+        if not reserved and effect in {
+            Effect.TRUSTED_WORKSPACE_READ,
+            Effect.TRUSTED_WORKSPACE_WRITE,
+        }:
+            raise ValueError("workspace effect is reserved")
         if capability.descriptor.card.capability_id in self._capabilities:
             raise ValueError("capability is already registered")
         self._capabilities[capability.descriptor.card.capability_id] = capability
@@ -214,6 +241,16 @@ class CapabilityGateway:
             self._audit("denial", operation, capability_id=capability_id, detail=detail)
             code = "approval_required" if decision == PolicyDecision.REQUIRE_APPROVAL else "denied"
             raise GatewayError(code, detail)
+        effect = capability.descriptor.effect
+        if capability_id.startswith(("workspace.", "git.diff.")) and effect not in {
+            "trusted_workspace_read",
+            "trusted_workspace_write",
+        }:
+            self._audit("denial", operation, capability_id=capability_id, detail="untrusted effect")
+            raise GatewayError("denied", "untrusted effect classification")
+        if effect == Effect.TRUSTED_WORKSPACE_WRITE and self.context.stage != "IMPLEMENT":
+            self._audit("denial", operation, capability_id=capability_id, detail="stage denied")
+            raise GatewayError("denied", "workspace writes require IMPLEMENT stage")
         return capability
 
     def describe(self, capability_id: str) -> CapabilityDescriptor:
@@ -246,14 +283,23 @@ class CapabilityGateway:
                 durable.error,
             )
             if durable.replayed:
-                self._executions[record.execution_id] = record
-                self._audit(
-                    "success" if record.status == ExecutionStatus.SUCCEEDED else "failure",
-                    "invoke_replay",
-                    capability_id=capability_id,
-                    execution_id=record.execution_id,
-                )
-                return record
+                if (
+                    record.status == ExecutionStatus.FAILED
+                    and record.error == "interrupted before terminal result"
+                    and capability.descriptor.effect == Effect.TRUSTED_WORKSPACE_WRITE
+                ):
+                    durable = self.store.restart_interrupted_invocation(record.invocation_id)
+                    record.status = ExecutionStatus(durable.status)
+                    record.error = None
+                else:
+                    self._executions[record.execution_id] = record
+                    self._audit(
+                        "success" if record.status == ExecutionStatus.SUCCEEDED else "failure",
+                        "invoke_replay",
+                        capability_id=capability_id,
+                        execution_id=record.execution_id,
+                    )
+                    return record
         else:
             record = ExecutionRecord(
                 str(uuid4()), str(uuid4()), capability_id, ExecutionStatus.RUNNING
@@ -283,12 +329,12 @@ class CapabilityGateway:
     def status(self, execution_id: str) -> ExecutionRecord:
         record = self._executions.get(execution_id)
         if record is None and self.store is not None:
-            durable = self.store.invocation_by_execution(execution_id)
+            durable = self.store.invocation_by_execution(self.context.run_id, execution_id)
             if durable is not None:
                 record = ExecutionRecord(
                     durable.execution_id,
                     durable.invocation_id,
-                    "persisted",
+                    durable.capability_id,
                     ExecutionStatus(durable.status),
                     durable.result,
                     durable.error,

@@ -25,6 +25,7 @@ from agent_runtime.gateway import (
     CapabilityCard,
     CapabilityDescriptor,
     CapabilityGateway,
+    Effect,
     ExecutionRecord,
     ExecutionStatus,
     GatewayError,
@@ -70,6 +71,13 @@ from agent_runtime.repository import (
 )
 from agent_runtime.routing import ModelDeployment, ModelRouter, RoutingRequirements
 from agent_runtime.runner import GATEWAY_TOOLS, AgentRunner
+from agent_runtime.workspace import (
+    Workspace,
+    WorkspaceError,
+    WorkspaceLimits,
+    WorkspaceManager,
+    workspace_capabilities,
+)
 
 __all__ = [
     "GATEWAY_TOOLS",
@@ -85,6 +93,7 @@ __all__ = [
     "ChatResponse",
     "Comment",
     "DurableAuditSink",
+    "Effect",
     "ExecutionRecord",
     "ExecutionStatus",
     "GatewayError",
@@ -128,9 +137,14 @@ __all__ = [
     "ToolDefinition",
     "ToolResult",
     "Usage",
+    "Workspace",
+    "WorkspaceError",
+    "WorkspaceLimits",
+    "WorkspaceManager",
     "canonical_schema_hash",
     "fixture_read_capability",
     "invocation_identity",
     "jira_read_capabilities",
     "redact_untrusted",
+    "workspace_capabilities",
 ]

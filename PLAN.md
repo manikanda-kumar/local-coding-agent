@@ -444,7 +444,7 @@ Acceptance criteria:
 - Timeout, cancellation, malformed output, and oversized output are structured failures.
 - A fixture story reaches `PLAN_READY` with cited file and symbol evidence.
 
-## Phase 5 — Confined workspace edits `[>]`
+## Phase 5 — Confined workspace edits `[x]`
 
 Goal: permit reversible edits without executing repository code.
 
@@ -465,7 +465,7 @@ Acceptance criteria:
 - Writes are only allowed during `IMPLEMENT`.
 - No repository code is executed in this phase.
 
-## Phase 6 — Sandboxed validation loop `[ ]`
+## Phase 6 — Sandboxed validation loop `[>]`
 
 Goal: execute trusted validation profiles and allow bounded correction attempts.
 
