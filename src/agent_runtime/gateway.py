@@ -29,6 +29,7 @@ class Effect(StrEnum):
     TRUSTED_READ = "trusted_read"
     TRUSTED_WORKSPACE_READ = "trusted_workspace_read"
     TRUSTED_WORKSPACE_WRITE = "trusted_workspace_write"
+    TRUSTED_PROCESS_EXECUTION = "trusted_process_execution"
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,6 +111,8 @@ class InMemoryCapabilityCatalog:
             "workspace.patch.apply": Effect.TRUSTED_WORKSPACE_WRITE,
             "workspace.file.create": Effect.TRUSTED_WORKSPACE_WRITE,
             "git.diff.read": Effect.TRUSTED_WORKSPACE_READ,
+            "workspace.test.run": Effect.TRUSTED_PROCESS_EXECUTION,
+            "workspace.lint.run": Effect.TRUSTED_PROCESS_EXECUTION,
         }
         reserved = capability_id.startswith(("workspace.", "git.diff."))
         if reserved and reserved_effects.get(capability_id) != effect:
@@ -117,6 +120,7 @@ class InMemoryCapabilityCatalog:
         if not reserved and effect in {
             Effect.TRUSTED_WORKSPACE_READ,
             Effect.TRUSTED_WORKSPACE_WRITE,
+            Effect.TRUSTED_PROCESS_EXECUTION,
         }:
             raise ValueError("workspace effect is reserved")
         if capability.descriptor.card.capability_id in self._capabilities:
@@ -251,6 +255,9 @@ class CapabilityGateway:
         if effect == Effect.TRUSTED_WORKSPACE_WRITE and self.context.stage != "IMPLEMENT":
             self._audit("denial", operation, capability_id=capability_id, detail="stage denied")
             raise GatewayError("denied", "workspace writes require IMPLEMENT stage")
+        if effect == Effect.TRUSTED_PROCESS_EXECUTION and self.context.stage != "VALIDATE":
+            self._audit("denial", operation, capability_id=capability_id, detail="stage denied")
+            raise GatewayError("denied", "validation execution requires VALIDATE stage")
         return capability
 
     def describe(self, capability_id: str) -> CapabilityDescriptor:

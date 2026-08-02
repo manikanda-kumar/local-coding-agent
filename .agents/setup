@@ -12,6 +12,23 @@ if sys.version_info < (3, 11):
     raise SystemExit("Python 3.11 or newer is required")
 PY
 
+if ! command -v bwrap >/dev/null 2>&1; then
+  echo "[setup] Installing Bubblewrap sandbox runtime"
+  if [[ "$(id -u)" -eq 0 ]]; then
+    apt-get update -qq
+    apt-get install -y bubblewrap
+  else
+    sudo apt-get update -qq
+    sudo apt-get install -y bubblewrap
+  fi
+fi
+
+echo "[setup] Verifying Bubblewrap user/network/PID namespace isolation"
+bwrap --unshare-user --unshare-pid --unshare-net --unshare-ipc --unshare-uts \
+  --unshare-cgroup --ro-bind /usr /usr --symlink usr/lib /lib \
+  --symlink usr/lib64 /lib64 --proc /proc --dev /dev --tmpfs /tmp \
+  --clearenv /usr/bin/true
+
 if [[ -f pyproject.toml ]]; then
   echo "[setup] Creating the project virtual environment"
   python3 -m venv .venv

@@ -71,6 +71,18 @@ from agent_runtime.repository import (
 )
 from agent_runtime.routing import ModelDeployment, ModelRouter, RoutingRequirements
 from agent_runtime.runner import GATEWAY_TOOLS, AgentRunner
+from agent_runtime.validation import (
+    BubblewrapSandboxBackend,
+    CoordinatorLimits,
+    ImplementationValidationCoordinator,
+    SandboxBackend,
+    SandboxLimits,
+    SandboxUnavailable,
+    ValidationProfile,
+    ValidationResult,
+    ValidationService,
+    validation_capabilities,
+)
 from agent_runtime.workspace import (
     Workspace,
     WorkspaceError,
@@ -84,6 +96,7 @@ __all__ = [
     "AgentRunner",
     "ArtifactStore",
     "AuditEvent",
+    "BubblewrapSandboxBackend",
     "Capability",
     "CapabilityCard",
     "CapabilityDescriptor",
@@ -92,11 +105,13 @@ __all__ = [
     "ChatRequest",
     "ChatResponse",
     "Comment",
+    "CoordinatorLimits",
     "DurableAuditSink",
     "Effect",
     "ExecutionRecord",
     "ExecutionStatus",
     "GatewayError",
+    "ImplementationValidationCoordinator",
     "InMemoryAuditSink",
     "InMemoryCapabilityCatalog",
     "IncompleteModelOutputError",
@@ -126,6 +141,9 @@ __all__ = [
     "RunRecord",
     "RunState",
     "SQLiteRunStore",
+    "SandboxBackend",
+    "SandboxLimits",
+    "SandboxUnavailable",
     "StaticPolicyEngine",
     "StoredInvocation",
     "StoredStorySnapshot",
@@ -137,6 +155,9 @@ __all__ = [
     "ToolDefinition",
     "ToolResult",
     "Usage",
+    "ValidationProfile",
+    "ValidationResult",
+    "ValidationService",
     "Workspace",
     "WorkspaceError",
     "WorkspaceLimits",
@@ -146,5 +167,6 @@ __all__ = [
     "invocation_identity",
     "jira_read_capabilities",
     "redact_untrusted",
+    "validation_capabilities",
     "workspace_capabilities",
 ]

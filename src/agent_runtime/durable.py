@@ -205,6 +205,17 @@ class SQLiteRunStore:
               mutation_id TEXT NOT NULL REFERENCES workspace_mutations(mutation_id),
               diff TEXT NOT NULL, changed_files_json TEXT NOT NULL, created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS validation_attempts (
+              id INTEGER PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(run_id),
+              attempt INTEGER NOT NULL, profile_id TEXT NOT NULL, generation INTEGER NOT NULL,
+              status TEXT NOT NULL, result_json TEXT, created_at TEXT NOT NULL,
+              completed_at TEXT, UNIQUE(run_id,attempt,profile_id)
+            );
+            CREATE TABLE IF NOT EXISTS validation_checkpoints (
+              id INTEGER PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(run_id),
+              attempt INTEGER NOT NULL, passed INTEGER NOT NULL, results_json TEXT NOT NULL,
+              created_at TEXT NOT NULL, UNIQUE(run_id,attempt)
+            );
             """
         )
 
@@ -532,6 +543,61 @@ class SQLiteRunStore:
                     event.execution_id,
                     event.detail,
                 ),
+            )
+
+    def begin_validation(self, run_id: str, attempt: int, profile_id: str, generation: int) -> None:
+        with self.connection:
+            self.connection.execute(
+                "INSERT OR IGNORE INTO validation_attempts(run_id,attempt,profile_id,generation,status,created_at) VALUES (?,?,?,?,?,?)",
+                (run_id, attempt, profile_id, generation, "RUNNING", datetime.now(UTC).isoformat()),
+            )
+
+    def finish_validation(self, run_id: str, attempt: int, profile_id: str, result: Any) -> None:
+        encoded = _json(result)
+        with self.connection:
+            cursor = self.connection.execute(
+                "UPDATE validation_attempts SET status=?,result_json=?,completed_at=? WHERE run_id=? AND attempt=? AND profile_id=? AND status='RUNNING'",
+                (
+                    "PASSED" if result["passed"] else "FAILED",
+                    encoded,
+                    datetime.now(UTC).isoformat(),
+                    run_id,
+                    attempt,
+                    profile_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("validation attempt is not running")
+
+    def validation_result(
+        self, run_id: str, attempt: int, profile_id: str
+    ) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            "SELECT status,result_json FROM validation_attempts "
+            "WHERE run_id=? AND attempt=? AND profile_id=?",
+            (run_id, attempt, profile_id),
+        ).fetchone()
+        if row is None or row["status"] == "RUNNING":
+            return None
+        return json.loads(row["result_json"])
+
+    def next_validation_attempt(self, run_id: str) -> int:
+        checkpoint = self.connection.execute(
+            "SELECT COALESCE(MAX(attempt),0) FROM validation_checkpoints WHERE run_id=?", (run_id,)
+        ).fetchone()[0]
+        running = self.connection.execute(
+            "SELECT COALESCE(MAX(attempt),0) FROM validation_attempts "
+            "WHERE run_id=? AND status='RUNNING'",
+            (run_id,),
+        ).fetchone()[0]
+        return running if running > checkpoint else checkpoint + 1
+
+    def save_validation_checkpoint(self, run_id: str, attempt: int, results: Any) -> None:
+        passed = bool(results) and all(item["passed"] for item in results)
+        with self.connection:
+            self.connection.execute(
+                "INSERT OR REPLACE INTO validation_checkpoints(run_id,attempt,passed,results_json,created_at) VALUES (?,?,?,?,?)",
+                (run_id, attempt, int(passed), _json(results), datetime.now(UTC).isoformat()),
             )
 
 

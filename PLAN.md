@@ -465,7 +465,7 @@ Acceptance criteria:
 - Writes are only allowed during `IMPLEMENT`.
 - No repository code is executed in this phase.
 
-## Phase 6 — Sandboxed validation loop `[>]`
+## Phase 6 — Sandboxed validation loop `[x]`
 
 Goal: execute trusted validation profiles and allow bounded correction attempts.
 
@@ -485,7 +485,7 @@ Acceptance criteria:
 - Timeout and cancellation terminate descendant processes.
 - Validation cannot pass to publication without required checks or an approved exception.
 
-## Phase 7 — Approval and pull-request publication `[ ]`
+## Phase 7 — Approval and pull-request publication `[>]`
 
 Goal: safely perform the first irreversible external effect.
 
