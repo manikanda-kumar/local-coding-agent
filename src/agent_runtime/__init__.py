@@ -1,5 +1,12 @@
 """Provider-agnostic enterprise agent runtime."""
 
+from agent_runtime.context import (
+    ContextComposer,
+    KnowledgePage,
+    RepositoryEvidence,
+    ResumePacket,
+    ResumeSkillPin,
+)
 from agent_runtime.continuity import (
     ContinuityDecision,
     ContinuityLedger,
@@ -82,7 +89,12 @@ from agent_runtime.models import (
     Usage,
 )
 from agent_runtime.planning import IncompletePlanError, IntakePlanningService, StoryChangedError
-from agent_runtime.profiles import MODEL_PROFILES, ModelRequestProfile
+from agent_runtime.profiles import (
+    MODEL_PROFILES,
+    PROVIDER_DEFAULT_PROFILE_ID,
+    PROVIDER_DEFAULT_PROFILE_SHA256,
+    ModelRequestProfile,
+)
 from agent_runtime.publication import (
     ApprovalBinding,
     GitHubAdapter,
@@ -146,6 +158,8 @@ from agent_runtime.workspace import (
 __all__ = [
     "GATEWAY_TOOLS",
     "MODEL_PROFILES",
+    "PROVIDER_DEFAULT_PROFILE_ID",
+    "PROVIDER_DEFAULT_PROFILE_SHA256",
     "AgentRunner",
     "ApprovalBinding",
     "ArtifactStore",
@@ -161,6 +175,7 @@ __all__ = [
     "CodingAgentOutcome",
     "Comment",
     "ContextBudget",
+    "ContextComposer",
     "ContinuityDecision",
     "ContinuityLedger",
     "ContinuityService",
@@ -196,6 +211,7 @@ __all__ = [
     "JiraWriteAdapter",
     "JiraWriteError",
     "JiraWriteTimeout",
+    "KnowledgePage",
     "MCPAllowlistAdapter",
     "MCPCredentials",
     "MCPFailure",
@@ -215,9 +231,12 @@ __all__ = [
     "PublicationService",
     "RedactionPolicy",
     "ReportingDenied",
+    "RepositoryEvidence",
     "RepositorySnapshot",
     "RepositorySnapshotError",
     "RepositorySnapshotProvider",
+    "ResumePacket",
+    "ResumeSkillPin",
     "RetentionPolicy",
     "ReviewedToolMapping",
     "RevocationMetadata",

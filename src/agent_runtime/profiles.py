@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -90,6 +92,32 @@ class ModelRequestProfile:
             "reasoning_mode": self.reasoning_mode,
             "extensions": self.request_extensions(),
         }
+
+    def operational_fingerprint(self) -> str:
+        """Hash every setting that can affect a request or its context contract."""
+        value = {
+            "context_window_tokens": self.context_window_tokens,
+            "extensions": self.request_extensions(),
+            "max_output_tokens": self.max_output_tokens,
+            "reasoning_field": self.reasoning_field,
+            "reasoning_mode": self.reasoning_mode,
+            "reasoning_parser": self.reasoning_parser,
+            "seed": self.seed,
+            "stop": list(self.stop),
+            "temperature": self.temperature,
+            "timeout": self.timeout,
+            "tool_parser": self.tool_parser,
+            "top_k": self.top_k,
+            "top_p": self.top_p,
+        }
+        encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+PROVIDER_DEFAULT_PROFILE_ID = "provider-default"
+PROVIDER_DEFAULT_PROFILE_SHA256 = hashlib.sha256(
+    b"agent-runtime:model-request-profile:provider-default:v1"
+).hexdigest()
 
 
 MODEL_PROFILES: Mapping[str, ModelRequestProfile] = MappingProxyType(

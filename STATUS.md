@@ -83,7 +83,7 @@ and verification-driven execution.
 
 ### Current verification baseline
 
-- `161 passed, 2 skipped` in the complete test suite.
+- `170 passed, 2 skipped` in the complete test suite.
 - Ruff lint and formatting checks pass.
 - The skipped tests are opt-in live JIRA and OpenRouter checks, not unit-test failures.
 
@@ -105,10 +105,11 @@ and verification-driven execution.
   newest complete assistant/tool rounds while accounting for output reserve and gateway schemas.
 - Done: malformed, orphaned, or duplicate tool correlations and a minimum context that cannot fit
   fail closed instead of sending an invalid model request.
-- Build a deterministic repository map and task-relevant context selector.
-- Inject only the continuity head, active task state, relevant repository evidence, and selected
+- Done: deterministic task-tag routing selects bounded repository evidence and internal knowledge
+  pages in stable order without semantic retrieval or authority coupling.
+- Done: inject only the continuity head, active task state, relevant repository evidence, and selected
   internal knowledge pages within a configured token budget.
-- Treat all retrieved content as untrusted data and keep context selection separate from capability
+- Done: treat all retrieved content as untrusted data and keep context selection separate from capability
   authorization.
 - Measure context relevance and model success against the golden-task harness.
 
@@ -124,11 +125,11 @@ and verification-driven execution.
 
 ### Phase 14 — Resume packets and knowledge routing
 
-- Produce bounded, deterministic resume packets from durable state and the continuity ledger.
-- Add tagged internal knowledge pages and deterministic index routing before considering semantic
-  retrieval.
-- Ensure resumed runs pin the same story, repository revision, policy, model profile, skill, and
-  workspace generation.
+- Done (primitive): bounded resume packets and tagged deterministic knowledge routing are available.
+- Pending: wire resume-packet and composed-context consumption into the production workflow; until
+  then the workflow does not claim enforcement of these pins at model-call boundaries.
+- Ensure the integrated resumed workflow consumes the same story, repository revision, policy,
+  model profile, skill, and workspace generation pins.
 
 ### Phase 15 — End-to-end JIRA-story dogfooding
 

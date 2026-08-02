@@ -66,6 +66,8 @@ class RunRecord:
     policy_version: str
     usage: dict[str, Any]
     limits: dict[str, Any]
+    profile_id: str = "provider-default"
+    profile_sha256: str = "dde4c0e4b318df885b415f7cd2bbb33c3f4cf544dacb003902ac0cafa8fa1ee4"
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,7 +145,10 @@ class SQLiteRunStore:
               run_id TEXT PRIMARY KEY, state TEXT NOT NULL, story_hash TEXT NOT NULL,
               repository TEXT NOT NULL, base_revision TEXT NOT NULL, provider TEXT NOT NULL,
               model TEXT NOT NULL, prompt_version TEXT NOT NULL, policy_version TEXT NOT NULL,
-              usage_json TEXT NOT NULL, limits_json TEXT NOT NULL, created_at TEXT NOT NULL
+              usage_json TEXT NOT NULL, limits_json TEXT NOT NULL, created_at TEXT NOT NULL,
+              profile_id TEXT NOT NULL DEFAULT 'provider-default',
+              profile_sha256 TEXT NOT NULL DEFAULT
+                'dde4c0e4b318df885b415f7cd2bbb33c3f4cf544dacb003902ac0cafa8fa1ee4'
             );
             CREATE TABLE IF NOT EXISTS transitions (
               id INTEGER PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(run_id),
@@ -280,8 +285,38 @@ class SQLiteRunStore:
             CREATE TRIGGER IF NOT EXISTS immutable_continuity_decision_delete
               BEFORE DELETE ON continuity_decisions
               BEGIN SELECT RAISE(ABORT, 'continuity decisions are immutable'); END;
+            CREATE TRIGGER IF NOT EXISTS immutable_run_skill_pin_update
+              BEFORE UPDATE ON run_skill_pins
+              BEGIN SELECT RAISE(ABORT, 'run skill pins are immutable'); END;
+            CREATE TRIGGER IF NOT EXISTS immutable_run_skill_pin_delete
+              BEFORE DELETE ON run_skill_pins
+              BEGIN SELECT RAISE(ABORT, 'run skill pins are immutable'); END;
             """
         )
+        from agent_runtime.profiles import (
+            PROVIDER_DEFAULT_PROFILE_ID,
+            PROVIDER_DEFAULT_PROFILE_SHA256,
+        )
+
+        self.connection.execute("BEGIN IMMEDIATE")
+        try:
+            run_columns = {
+                row["name"] for row in self.connection.execute("PRAGMA table_info(runs)")
+            }
+            if "profile_id" not in run_columns:
+                self.connection.execute(
+                    "ALTER TABLE runs ADD COLUMN profile_id TEXT NOT NULL DEFAULT "
+                    f"'{PROVIDER_DEFAULT_PROFILE_ID}'"
+                )
+            if "profile_sha256" not in run_columns:
+                self.connection.execute(
+                    "ALTER TABLE runs ADD COLUMN profile_sha256 TEXT NOT NULL DEFAULT "
+                    f"'{PROVIDER_DEFAULT_PROFILE_SHA256}'"
+                )
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
         invocation_columns = {
             row["name"] for row in self.connection.execute("PRAGMA table_info(invocations)")
         }
@@ -344,13 +379,36 @@ class SQLiteRunStore:
         model: str,
         prompt_version: str,
         policy_version: str,
+        profile_id: str | None = None,
+        model_profile: Any | None = None,
         usage: Mapping[str, Any] | None = None,
         limits: Mapping[str, Any] | None = None,
     ) -> RunRecord:
+        from agent_runtime.profiles import (
+            MODEL_PROFILES,
+            PROVIDER_DEFAULT_PROFILE_ID,
+            PROVIDER_DEFAULT_PROFILE_SHA256,
+            ModelRequestProfile,
+        )
+
+        selected_id = profile_id or PROVIDER_DEFAULT_PROFILE_ID
+        if model_profile is not None and not isinstance(model_profile, ModelRequestProfile):
+            raise TypeError("model_profile must be a ModelRequestProfile")
+        if selected_id == PROVIDER_DEFAULT_PROFILE_ID:
+            if model_profile is not None:
+                raise ValueError("provider-default cannot pin an explicit model profile")
+            profile_sha256 = PROVIDER_DEFAULT_PROFILE_SHA256
+        else:
+            selected = model_profile or MODEL_PROFILES.get(selected_id)
+            if selected is None:
+                raise ValueError("unknown model request profile")
+            profile_sha256 = selected.operational_fingerprint()
         now = datetime.now(UTC).isoformat()
         with self.connection:
             self.connection.execute(
-                "INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO runs(run_id,state,story_hash,repository,base_revision,provider,model,"
+                "prompt_version,policy_version,usage_json,limits_json,created_at,profile_id,"
+                "profile_sha256) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     run_id,
                     RunState.NEW,
@@ -364,6 +422,8 @@ class SQLiteRunStore:
                     _json(usage or {}),
                     _json(limits or {}),
                     now,
+                    selected_id,
+                    profile_sha256,
                 ),
             )
             self.connection.execute(
@@ -389,6 +449,8 @@ class SQLiteRunStore:
             row["policy_version"],
             json.loads(row["usage_json"]),
             json.loads(row["limits_json"]),
+            row["profile_id"],
+            row["profile_sha256"],
         )
 
     def transition(
