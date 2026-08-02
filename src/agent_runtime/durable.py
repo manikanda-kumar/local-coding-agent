@@ -1,0 +1,364 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import sqlite3
+from collections.abc import Mapping
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from enum import StrEnum
+from itertools import pairwise
+from pathlib import Path
+from typing import Any
+
+
+class RunState(StrEnum):
+    NEW = "NEW"
+    INTAKE = "INTAKE"
+    ANALYZE = "ANALYZE"
+    PLAN_READY = "PLAN_READY"
+    IMPLEMENT = "IMPLEMENT"
+    VALIDATE = "VALIDATE"
+    AWAITING_PUBLISH_APPROVAL = "AWAITING_PUBLISH_APPROVAL"
+    PUBLISH = "PUBLISH"
+    REPORT = "REPORT"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+
+
+_FLOW = (
+    RunState.NEW,
+    RunState.INTAKE,
+    RunState.ANALYZE,
+    RunState.PLAN_READY,
+    RunState.IMPLEMENT,
+    RunState.VALIDATE,
+    RunState.AWAITING_PUBLISH_APPROVAL,
+    RunState.PUBLISH,
+    RunState.REPORT,
+    RunState.SUCCEEDED,
+)
+_NEXT = dict(pairwise(_FLOW))
+_ALLOWED_TRANSITIONS = {*_NEXT.items(), (RunState.VALIDATE, RunState.IMPLEMENT)}
+_TERMINAL = {RunState.SUCCEEDED, RunState.FAILED, RunState.CANCELLED}
+
+
+class InvalidTransition(ValueError):
+    pass
+
+
+class RunCancelled(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class RunRecord:
+    run_id: str
+    state: RunState
+    story_hash: str
+    repository: str
+    base_revision: str
+    provider: str
+    model: str
+    prompt_version: str
+    policy_version: str
+    usage: dict[str, Any]
+    limits: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class StoredInvocation:
+    invocation_id: str
+    execution_id: str
+    status: str
+    result: Any = None
+    error: str | None = None
+    replayed: bool = False
+
+
+def _json(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def invocation_identity(
+    run_id: str, step: str, capability_id: str, arguments: Mapping[str, Any]
+) -> str:
+    material = _json([run_id, step, capability_id, arguments]).encode()
+    return hashlib.sha256(material).hexdigest()
+
+
+class ArtifactStore:
+    """Local immutable content-addressed storage."""
+
+    def __init__(self, root: str | Path) -> None:
+        self.root = Path(root)
+        self.root.mkdir(parents=True, exist_ok=True)
+
+    def put(self, content: bytes) -> str:
+        digest = hashlib.sha256(content).hexdigest()
+        target = self.root / digest[:2] / digest[2:]
+        target.parent.mkdir(exist_ok=True)
+        if not target.exists():
+            temporary = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+            temporary.write_bytes(content)
+            try:
+                os.link(temporary, target)
+            except FileExistsError:
+                pass
+            finally:
+                temporary.unlink(missing_ok=True)
+        return digest
+
+    def get(self, digest: str) -> bytes:
+        if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+            raise ValueError("invalid SHA-256 digest")
+        content = (self.root / digest[:2] / digest[2:]).read_bytes()
+        if hashlib.sha256(content).hexdigest() != digest:
+            raise OSError("artifact content hash mismatch")
+        return content
+
+
+class SQLiteRunStore:
+    def __init__(self, path: str | Path) -> None:
+        self.connection = sqlite3.connect(path, isolation_level="IMMEDIATE")
+        self.connection.row_factory = sqlite3.Row
+        self.connection.execute("PRAGMA foreign_keys=ON")
+        self.connection.execute("PRAGMA journal_mode=WAL")
+        self.connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS runs (
+              run_id TEXT PRIMARY KEY, state TEXT NOT NULL, story_hash TEXT NOT NULL,
+              repository TEXT NOT NULL, base_revision TEXT NOT NULL, provider TEXT NOT NULL,
+              model TEXT NOT NULL, prompt_version TEXT NOT NULL, policy_version TEXT NOT NULL,
+              usage_json TEXT NOT NULL, limits_json TEXT NOT NULL, created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS transitions (
+              id INTEGER PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(run_id),
+              from_state TEXT NOT NULL, to_state TEXT NOT NULL, attempted_at TEXT NOT NULL,
+              committed INTEGER NOT NULL, detail TEXT
+            );
+            CREATE TABLE IF NOT EXISTS checkpoints (
+              id INTEGER PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(run_id),
+              state TEXT NOT NULL, model TEXT NOT NULL, policy_version TEXT NOT NULL,
+              payload_json TEXT NOT NULL, created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS invocations (
+              invocation_id TEXT PRIMARY KEY, execution_id TEXT UNIQUE NOT NULL,
+              run_id TEXT NOT NULL REFERENCES runs(run_id), step TEXT NOT NULL,
+              capability_id TEXT NOT NULL, arguments_json TEXT NOT NULL, status TEXT NOT NULL,
+              result_json TEXT, error TEXT, created_at TEXT NOT NULL, completed_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS approvals (
+              approval_id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(run_id),
+              action_digest TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS audit_events (
+              event_id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(run_id),
+              timestamp TEXT NOT NULL, outcome TEXT NOT NULL, operation TEXT NOT NULL,
+              capability_id TEXT, execution_id TEXT, detail TEXT
+            );
+            """
+        )
+
+    def close(self) -> None:
+        self.connection.close()
+
+    def create_run(
+        self,
+        run_id: str,
+        *,
+        story_hash: str,
+        repository: str,
+        base_revision: str,
+        provider: str,
+        model: str,
+        prompt_version: str,
+        policy_version: str,
+        usage: Mapping[str, Any] | None = None,
+        limits: Mapping[str, Any] | None = None,
+    ) -> RunRecord:
+        now = datetime.now(UTC).isoformat()
+        with self.connection:
+            self.connection.execute(
+                "INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    run_id,
+                    RunState.NEW,
+                    story_hash,
+                    repository,
+                    base_revision,
+                    provider,
+                    model,
+                    prompt_version,
+                    policy_version,
+                    _json(usage or {}),
+                    _json(limits or {}),
+                    now,
+                ),
+            )
+            self.connection.execute(
+                "INSERT INTO checkpoints(run_id,state,model,policy_version,payload_json,created_at) "
+                "VALUES (?,?,?,?,?,?)",
+                (run_id, RunState.NEW, model, policy_version, "{}", now),
+            )
+        return self.get_run(run_id)
+
+    def get_run(self, run_id: str) -> RunRecord:
+        row = self.connection.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
+        if row is None:
+            raise KeyError(run_id)
+        return RunRecord(
+            row["run_id"],
+            RunState(row["state"]),
+            row["story_hash"],
+            row["repository"],
+            row["base_revision"],
+            row["provider"],
+            row["model"],
+            row["prompt_version"],
+            row["policy_version"],
+            json.loads(row["usage_json"]),
+            json.loads(row["limits_json"]),
+        )
+
+    def transition(
+        self, run_id: str, target: RunState, payload: Mapping[str, Any] | None = None
+    ) -> None:
+        now = datetime.now(UTC).isoformat()
+        run = self.get_run(run_id)
+        valid = run.state not in _TERMINAL and (
+            (run.state, target) in _ALLOWED_TRANSITIONS
+            or target in {RunState.FAILED, RunState.CANCELLED}
+        )
+        if not valid:
+            with self.connection:
+                self.connection.execute(
+                    "INSERT INTO transitions(run_id,from_state,to_state,attempted_at,committed,detail) "
+                    "VALUES (?,?,?,?,0,'invalid transition')",
+                    (run_id, run.state, target, now),
+                )
+            raise InvalidTransition(f"cannot transition {run.state} to {target}")
+        with self.connection:
+            self.connection.execute(
+                "INSERT INTO transitions(run_id,from_state,to_state,attempted_at,committed,detail) "
+                "VALUES (?,?,?,?,?,?)",
+                (run_id, run.state, target, now, 1, None),
+            )
+            self.connection.execute("UPDATE runs SET state=? WHERE run_id=?", (target, run_id))
+            self.connection.execute(
+                "INSERT INTO checkpoints(run_id,state,model,policy_version,payload_json,created_at) "
+                "VALUES (?,?,?,?,?,?)",
+                (run_id, target, run.model, run.policy_version, _json(payload or {}), now),
+            )
+
+    def checkpoint(self, run_id: str) -> sqlite3.Row:
+        row = self.connection.execute(
+            "SELECT * FROM checkpoints WHERE run_id=? ORDER BY id DESC LIMIT 1", (run_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(run_id)
+        return row
+
+    def begin_invocation(
+        self, run_id: str, step: str, capability_id: str, arguments: Mapping[str, Any]
+    ) -> StoredInvocation:
+        run = self.get_run(run_id)
+        if run.state in _TERMINAL:
+            if run.state == RunState.CANCELLED:
+                raise RunCancelled("run is cancelled")
+            raise RuntimeError(f"run is terminal: {run.state}")
+        identity = invocation_identity(run_id, step, capability_id, arguments)
+        existing = self.connection.execute(
+            "SELECT * FROM invocations WHERE invocation_id=?", (identity,)
+        ).fetchone()
+        if existing is not None:
+            if existing["status"] == "RUNNING":
+                with self.connection:
+                    self.connection.execute(
+                        "UPDATE invocations SET status='FAILED',error='interrupted before terminal result',"
+                        "completed_at=? WHERE invocation_id=?",
+                        (datetime.now(UTC).isoformat(), identity),
+                    )
+                existing = self.connection.execute(
+                    "SELECT * FROM invocations WHERE invocation_id=?", (identity,)
+                ).fetchone()
+            return self._invocation(existing, replayed=True)
+        execution_id = hashlib.sha256(f"execution:{identity}".encode()).hexdigest()
+        with self.connection:
+            self.connection.execute(
+                "INSERT INTO invocations(invocation_id,execution_id,run_id,step,capability_id,"
+                "arguments_json,status,created_at) VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    identity,
+                    execution_id,
+                    run_id,
+                    step,
+                    capability_id,
+                    _json(arguments),
+                    "RUNNING",
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
+        return StoredInvocation(identity, execution_id, "RUNNING")
+
+    def finish_invocation(
+        self, invocation_id: str, *, result: Any = None, error: str | None = None
+    ) -> StoredInvocation:
+        status = "FAILED" if error is not None else "SUCCEEDED"
+        with self.connection:
+            cursor = self.connection.execute(
+                "UPDATE invocations SET status=?,result_json=?,error=?,completed_at=? "
+                "WHERE invocation_id=? AND status='RUNNING'",
+                (
+                    status,
+                    None if error is not None else _json(result),
+                    error,
+                    datetime.now(UTC).isoformat(),
+                    invocation_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("invocation is already terminal")
+        row = self.connection.execute(
+            "SELECT * FROM invocations WHERE invocation_id=?", (invocation_id,)
+        ).fetchone()
+        return self._invocation(row)
+
+    def invocation_by_execution(self, execution_id: str) -> StoredInvocation | None:
+        row = self.connection.execute(
+            "SELECT * FROM invocations WHERE execution_id=?", (execution_id,)
+        ).fetchone()
+        return None if row is None else self._invocation(row)
+
+    @staticmethod
+    def _invocation(row: sqlite3.Row, replayed: bool = False) -> StoredInvocation:
+        result = json.loads(row["result_json"]) if row["result_json"] is not None else None
+        return StoredInvocation(
+            row["invocation_id"], row["execution_id"], row["status"], result, row["error"], replayed
+        )
+
+    def emit_audit(self, event: Any) -> None:
+        with self.connection:
+            self.connection.execute(
+                "INSERT INTO audit_events VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    event.event_id,
+                    event.run_id,
+                    event.timestamp.isoformat(),
+                    event.outcome,
+                    event.operation,
+                    event.capability_id,
+                    event.execution_id,
+                    event.detail,
+                ),
+            )
+
+
+class DurableAuditSink:
+    def __init__(self, store: SQLiteRunStore) -> None:
+        self.store = store
+
+    def emit(self, event: Any) -> None:
+        self.store.emit_audit(event)

@@ -1,5 +1,16 @@
 """Provider-agnostic enterprise agent runtime."""
 
+from agent_runtime.durable import (
+    ArtifactStore,
+    DurableAuditSink,
+    InvalidTransition,
+    RunCancelled,
+    RunRecord,
+    RunState,
+    SQLiteRunStore,
+    StoredInvocation,
+    invocation_identity,
+)
 from agent_runtime.errors import (
     IncompleteModelOutputError,
     InvalidModelOutputError,
@@ -39,6 +50,7 @@ from agent_runtime.runner import GATEWAY_TOOLS, AgentRunner
 __all__ = [
     "GATEWAY_TOOLS",
     "AgentRunner",
+    "ArtifactStore",
     "AuditEvent",
     "Capability",
     "CapabilityCard",
@@ -47,6 +59,7 @@ __all__ = [
     "ChatMessage",
     "ChatRequest",
     "ChatResponse",
+    "DurableAuditSink",
     "ExecutionRecord",
     "ExecutionStatus",
     "GatewayError",
@@ -54,6 +67,7 @@ __all__ = [
     "InMemoryCapabilityCatalog",
     "IncompleteModelOutputError",
     "InvalidModelOutputError",
+    "InvalidTransition",
     "InvocationContext",
     "ModelCapabilities",
     "ModelDeployment",
@@ -62,11 +76,17 @@ __all__ = [
     "ModelRoutingError",
     "PolicyDecision",
     "RoutingRequirements",
+    "RunCancelled",
+    "RunRecord",
+    "RunState",
+    "SQLiteRunStore",
     "StaticPolicyEngine",
+    "StoredInvocation",
     "ToolArgumentsError",
     "ToolCall",
     "ToolDefinition",
     "ToolResult",
     "Usage",
     "fixture_read_capability",
+    "invocation_identity",
 ]

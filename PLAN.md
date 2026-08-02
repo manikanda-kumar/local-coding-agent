@@ -383,7 +383,7 @@ Acceptance criteria:
 - Model arguments cannot set identity, stage, workspace, policy, or idempotency keys.
 - The loop stops predictably at configured limits.
 
-## Phase 2 — Durable run kernel `[>]`
+## Phase 2 — Durable run kernel `[x]`
 
 Goal: make execution resumable and auditable before enabling any write.
 
@@ -404,7 +404,7 @@ Acceptance criteria:
 - Cancellation prevents new work.
 - Model and policy selection are pinned per checkpoint.
 
-## Phase 3 — JIRA intake and planning `[ ]`
+## Phase 3 — JIRA intake and planning `[>]`
 
 Goal: turn a real, read-only JIRA story into a persisted implementation plan.
 

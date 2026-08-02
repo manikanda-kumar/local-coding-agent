@@ -4,8 +4,11 @@ from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from agent_runtime.durable import SQLiteRunStore
 
 
 class PolicyDecision(StrEnum):
@@ -167,8 +170,10 @@ class CapabilityGateway:
         policy: StaticPolicyEngine,
         audit: InMemoryAuditSink,
         context: InvocationContext,
+        store: SQLiteRunStore | None = None,
     ) -> None:
         self.catalog, self.policy, self.audit, self.context = catalog, policy, audit, context
+        self.store = store
         self._executions: dict[str, ExecutionRecord] = {}
 
     def _audit(self, outcome: str, operation: str, **kwargs: Any) -> None:
@@ -223,16 +228,49 @@ class CapabilityGateway:
         except GatewayError as error:
             self._audit("invalid_request", "invoke", capability_id=capability_id, detail=str(error))
             raise
-        record = ExecutionRecord(str(uuid4()), str(uuid4()), capability_id, ExecutionStatus.RUNNING)
+        durable = None
+        if self.store is not None:
+            try:
+                durable = self.store.begin_invocation(
+                    self.context.run_id, self.context.stage, capability_id, arguments
+                )
+            except Exception as error:
+                self._audit("failure", "invoke", capability_id=capability_id, detail=str(error))
+                raise GatewayError("run_unavailable", str(error)) from error
+            record = ExecutionRecord(
+                durable.execution_id,
+                durable.invocation_id,
+                capability_id,
+                ExecutionStatus(durable.status),
+                durable.result,
+                durable.error,
+            )
+            if durable.replayed:
+                self._executions[record.execution_id] = record
+                self._audit(
+                    "success" if record.status == ExecutionStatus.SUCCEEDED else "failure",
+                    "invoke_replay",
+                    capability_id=capability_id,
+                    execution_id=record.execution_id,
+                )
+                return record
+        else:
+            record = ExecutionRecord(
+                str(uuid4()), str(uuid4()), capability_id, ExecutionStatus.RUNNING
+            )
         self._executions[record.execution_id] = record
         try:
             record.result = capability.handler(arguments, self.context)
             record.status = ExecutionStatus.SUCCEEDED
+            if self.store is not None:
+                self.store.finish_invocation(record.invocation_id, result=record.result)
             self._audit(
                 "success", "invoke", capability_id=capability_id, execution_id=record.execution_id
             )
         except Exception as error:  # noqa: BLE001 - capability failures become records
             record.status, record.error = ExecutionStatus.FAILED, str(error)
+            if self.store is not None:
+                self.store.finish_invocation(record.invocation_id, error=str(error))
             self._audit(
                 "failure",
                 "invoke",
@@ -244,6 +282,17 @@ class CapabilityGateway:
 
     def status(self, execution_id: str) -> ExecutionRecord:
         record = self._executions.get(execution_id)
+        if record is None and self.store is not None:
+            durable = self.store.invocation_by_execution(execution_id)
+            if durable is not None:
+                record = ExecutionRecord(
+                    durable.execution_id,
+                    durable.invocation_id,
+                    "persisted",
+                    ExecutionStatus(durable.status),
+                    durable.result,
+                    durable.error,
+                )
         if record is None:
             self._audit(
                 "invalid_request", "status", execution_id=execution_id, detail="unknown execution"
