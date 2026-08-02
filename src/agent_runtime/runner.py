@@ -6,6 +6,7 @@ import time
 from agent_runtime.gateway import CapabilityGateway, GatewayError, to_jsonable
 from agent_runtime.metrics import MetricEvent, MetricsSink, emit_metric
 from agent_runtime.models import ChatMessage, ChatRequest, ToolCall, ToolDefinition
+from agent_runtime.profiles import ModelRequestProfile
 from agent_runtime.providers.base import Provider
 
 
@@ -45,12 +46,14 @@ class AgentRunner:
         max_turns: int = 8,
         max_invocations: int = 4,
         metrics: MetricsSink | None = None,
+        profile: ModelRequestProfile | None = None,
     ) -> None:
         if max_turns < 1 or max_invocations < 0:
             raise ValueError("limits must be non-negative and max_turns positive")
         self.provider, self.model, self.gateway = provider, model, gateway
         self.max_turns, self.max_invocations = max_turns, max_invocations
         self.metrics = metrics
+        self.profile = profile
 
     def run(self, prompt: str) -> str:
         messages = [ChatMessage(role="user", content=prompt)]
@@ -58,8 +61,24 @@ class AgentRunner:
         for _ in range(self.max_turns):
             started = time.monotonic()
             try:
+                options = (
+                    {}
+                    if self.profile is None
+                    else {
+                        "temperature": self.profile.temperature,
+                        "max_tokens": self.profile.max_output_tokens,
+                        "top_p": self.profile.top_p,
+                        "top_k": self.profile.top_k,
+                        "seed": self.profile.seed,
+                        "stop": self.profile.stop,
+                        "timeout": self.profile.timeout,
+                        "reasoning_field": self.profile.reasoning_field,
+                        "reasoning_mode": self.profile.reasoning_mode,
+                        "extensions": self.profile.request_extensions(),
+                    }
+                )
                 response = self.provider.chat(
-                    self.model, ChatRequest(tuple(messages), tools=GATEWAY_TOOLS)
+                    self.model, ChatRequest(tuple(messages), tools=GATEWAY_TOOLS, **options)
                 )
             except Exception:
                 emit_metric(
@@ -73,6 +92,7 @@ class AgentRunner:
                     ),
                 )
                 raise
+            assistant_message = response.to_assistant_message()
             emit_metric(
                 self.metrics,
                 MetricEvent(
@@ -85,7 +105,7 @@ class AgentRunner:
                     output_tokens=response.usage.output_tokens,
                 ),
             )
-            messages.append(response.to_assistant_message())
+            messages.append(assistant_message)
             if not response.tool_calls:
                 return response.content
             for call in response.tool_calls:

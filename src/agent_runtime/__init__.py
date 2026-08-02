@@ -75,6 +75,7 @@ from agent_runtime.models import (
     Usage,
 )
 from agent_runtime.planning import IncompletePlanError, IntakePlanningService, StoryChangedError
+from agent_runtime.profiles import MODEL_PROFILES, ModelRequestProfile
 from agent_runtime.publication import (
     ApprovalBinding,
     GitHubAdapter,
@@ -136,6 +137,7 @@ from agent_runtime.workspace import (
 
 __all__ = [
     "GATEWAY_TOOLS",
+    "MODEL_PROFILES",
     "AgentRunner",
     "ApprovalBinding",
     "ArtifactStore",
@@ -188,6 +190,7 @@ __all__ = [
     "ModelCapabilities",
     "ModelDeployment",
     "ModelOutputError",
+    "ModelRequestProfile",
     "ModelRouter",
     "ModelRoutingError",
     "OpenTelemetryMetricsExporter",

@@ -104,21 +104,22 @@
 
 ### Now
 
-- Tier 1 implementation complete and verified locally: gateway-mediated validation is stage-safe;
-  JIRA transitions use consume-before-send durable intent and conservative at-most-once recovery;
-  run-state transitions use CAS; invocation-attempt audit precedes handlers; coordinator tests no
-  longer depend on Bubblewrap off Linux.
-- JIRA recovery distinguishes confirmed POST success from target-state reconciliation. Existing
-  uncertain intents are never automatically re-posted when status differs; manual reconciliation
-  is required because JIRA provides no idempotency key.
-- Current verification: `100 passed, 1 skipped`; Ruff checks and diff check pass.
+- Tier 1 committed as `a18d356`: gateway-mediated validation, conservative at-most-once JIRA
+  transitions, state CAS, pre-handler audit, and cross-platform coordinator tests.
+- Tier 2 local-model interface complete: exact tagged or structured reasoning replay; bounded
+  opaque reasoning; strict request-extension validation; profile timeout/sampling controls; object
+  tool-argument normalization; `<think>` leak handling; false streaming support removed.
+- Current-vLLM-qualified profiles added for MiniMax-M2.7, GLM-5.2, Kimi-K3 agentic, and
+  Gemma-4-31B-it, including parser launch metadata and vendor-recommended sampling baselines.
+- Current verification: `125 passed, 1 skipped`; Ruff checks and diff check pass.
 
 ### Next
 
-- Commit Tier 1 as a reviewable milestone.
-- Tier 2: preserve reasoning/reasoning-details across assistant turns, expose safe request/profile
-  controls, remove false streaming advertisement, add model profiles and malformed-output hygiene.
-- Then build the missing intake → plan → implement → validate → publish → report orchestrator.
+- Commit Tier 2 as a reviewable milestone.
+- Build the missing intake → analyze → plan → implement → validate → approval/publish → report
+  orchestrator with durable resume boundaries and no model authority over external effects.
+- Replace the synthetic golden scorer with an executable orchestrator fixture, then add optional
+  live vLLM profile smoke tests gated by environment configuration.
 
 ## Open questions
 

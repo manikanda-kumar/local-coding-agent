@@ -67,10 +67,3 @@ def test_router_reports_when_no_deployment_matches() -> None:
 
     with pytest.raises(LookupError, match="no model deployment"):
         router.select(RoutingRequirements(tools=True))
-
-
-def test_streaming_is_not_advertised_by_default() -> None:
-    router = ModelRouter((deployment("sync-only", context=8_000, tools=False, cost=0.1),))
-
-    with pytest.raises(LookupError, match="no model deployment"):
-        router.select(RoutingRequirements(streaming=True))

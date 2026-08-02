@@ -19,7 +19,6 @@ class ModelDeployment:
 class RoutingRequirements:
     minimum_context_window: int = 0
     tools: bool = False
-    streaming: bool = False
 
 
 class ModelRouter:
@@ -35,7 +34,6 @@ class ModelRouter:
             for deployment in self._deployments
             if deployment.capabilities.context_window >= requirements.minimum_context_window
             and (not requirements.tools or deployment.capabilities.supports_tools)
-            and (not requirements.streaming or deployment.capabilities.supports_streaming)
         ]
         if not candidates:
             raise ModelRoutingError("no model deployment satisfies the routing requirements")
