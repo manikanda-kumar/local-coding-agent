@@ -229,18 +229,18 @@ class CapabilityGateway:
             self._audit("invalid_request", "search", detail="query must be a string")
             raise GatewayError("invalid_request", "query must be a string")
         query = query.casefold()
-        cards = tuple(
-            capability.descriptor.card
-            for capability in self.catalog.all()
-            if self.policy.decide(capability.descriptor.card.capability_id, self.context)
-            == PolicyDecision.ALLOW
-            and query
-            in (
-                capability.descriptor.card.name + " " + capability.descriptor.card.summary
-            ).casefold()
-        )
+        cards = []
+        for capability in self.catalog.all():
+            card = capability.descriptor.card
+            if query not in (card.name + " " + card.summary).casefold():
+                continue
+            try:
+                self._authorized(card.capability_id, "search")
+            except GatewayError:
+                continue
+            cards.append(card)
         self._audit("success", "search")
-        return cards
+        return tuple(cards)
 
     def _authorized(self, capability_id: str, operation: str) -> Capability:
         capability = self.catalog.get(capability_id)
@@ -263,8 +263,9 @@ class CapabilityGateway:
             raise GatewayError(code, detail)
         effect = capability.descriptor.effect
         if capability_id.startswith(("workspace.", "git.diff.")) and effect not in {
-            "trusted_workspace_read",
-            "trusted_workspace_write",
+            Effect.TRUSTED_WORKSPACE_READ,
+            Effect.TRUSTED_WORKSPACE_WRITE,
+            Effect.TRUSTED_PROCESS_EXECUTION,
         }:
             self._audit("denial", operation, capability_id=capability_id, detail="untrusted effect")
             raise GatewayError("denied", "untrusted effect classification")
@@ -339,6 +340,11 @@ class CapabilityGateway:
                 str(uuid4()), str(uuid4()), capability_id, ExecutionStatus.RUNNING
             )
         self._executions[record.execution_id] = record
+        # The durable invocation exists at this point. Record the attempt before handing control
+        # to capability code so a process death cannot erase evidence of execution.
+        self._audit(
+            "attempt", "invoke", capability_id=capability_id, execution_id=record.execution_id
+        )
         try:
             record.result = capability.handler(arguments, self.context)
             record.status = ExecutionStatus.SUCCEEDED

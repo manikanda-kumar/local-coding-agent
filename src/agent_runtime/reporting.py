@@ -138,6 +138,32 @@ class JiraWriteAdapter:
             json={"transition": {"id": transition_id}},
         )
 
+    def transition_target_status(self, issue_key: str, transition_id: str) -> str:
+        result = self._request("GET", f"/rest/api/3/issue/{quote(issue_key, safe='')}/transitions")
+        transitions = result.get("transitions", [])
+        if not isinstance(transitions, list):
+            raise JiraWriteError("JIRA write failed")
+        for item in transitions:
+            if isinstance(item, dict) and str(item.get("id", "")) == transition_id:
+                target = item.get("to", {})
+                if isinstance(target, dict):
+                    value = target.get("id")
+                    if isinstance(value, (str, int)) and str(value):
+                        return str(value)
+        raise JiraWriteError("JIRA transition target is unavailable")
+
+    def current_issue_status(self, issue_key: str) -> str:
+        result = self._request(
+            "GET",
+            f"/rest/api/3/issue/{quote(issue_key, safe='')}",
+            params={"fields": "status"},
+        )
+        status = result.get("fields", {}).get("status", {})
+        value = status.get("id") if isinstance(status, dict) else None
+        if not isinstance(value, (str, int)) or not str(value):
+            raise JiraWriteError("JIRA write failed")
+        return str(value)
+
 
 class JiraReportingService:
     def __init__(
@@ -304,12 +330,17 @@ class JiraReportingService:
         result = self._comment(run_id)
         transitioned = False
         if transition_approval_id is not None:
+            created_intent = False
+            intent = self.store.connection.execute(
+                "SELECT * FROM jira_transition_outbox WHERE approval_id=? AND run_id=?",
+                (transition_approval_id, run_id),
+            ).fetchone()
             row = self.store.connection.execute(
                 "SELECT * FROM jira_transition_approvals WHERE approval_id=? AND run_id=?",
                 (transition_approval_id, run_id),
             ).fetchone()
             story, now = self.store.story_snapshot(run_id), datetime.now(UTC)
-            if (
+            if intent is None and (
                 row is None
                 or row["status"] != "APPROVED"
                 or row["transition_id"] not in self.transition_ids
@@ -325,16 +356,73 @@ class JiraReportingService:
                 or datetime.fromisoformat(row["expires_at"]) <= now
             ):
                 raise ReportingDenied("approval is consumed, expired, or no longer exact")
-            self.adapter.transition(result.issue_key, row["transition_id"])
-            with self.store.connection:
-                changed = self.store.connection.execute(
-                    "UPDATE jira_transition_approvals SET status='CONSUMED',consumed_at=? "
-                    "WHERE approval_id=? AND status='APPROVED'",
-                    (datetime.now(UTC).isoformat(), transition_approval_id),
+            if intent is None:
+                target_status = self.adapter.transition_target_status(
+                    result.issue_key, row["transition_id"]
                 )
-                if changed.rowcount != 1:
-                    raise ReportingDenied("approval already consumed")
-            transitioned = True
+                timestamp = datetime.now(UTC).isoformat()
+                with self.store.connection:
+                    changed = self.store.connection.execute(
+                        "UPDATE jira_transition_approvals SET status='CONSUMED',consumed_at=? "
+                        "WHERE approval_id=? AND status='APPROVED'",
+                        (timestamp, transition_approval_id),
+                    )
+                    if changed.rowcount != 1:
+                        raise ReportingDenied("approval already consumed")
+                    self.store.connection.execute(
+                        "INSERT INTO jira_transition_outbox VALUES (?,?,?,?,?,?,?,?)",
+                        (
+                            transition_approval_id,
+                            run_id,
+                            result.issue_key,
+                            row["transition_id"],
+                            target_status,
+                            "INTENT",
+                            timestamp,
+                            timestamp,
+                        ),
+                    )
+                intent = self.store.connection.execute(
+                    "SELECT * FROM jira_transition_outbox WHERE approval_id=?",
+                    (transition_approval_id,),
+                ).fetchone()
+                created_intent = True
+            elif intent["status"] == "POST_SUCCEEDED":
+                transitioned = True
+            else:
+                # Any prior attempt may have committed remotely before its result was persisted.
+                if (
+                    self.adapter.current_issue_status(intent["issue_key"])
+                    == intent["target_status"]
+                ):
+                    with self.store.connection:
+                        self.store.connection.execute(
+                            "UPDATE jira_transition_outbox SET status='SATISFIED',updated_at=? "
+                            "WHERE approval_id=?",
+                            (datetime.now(UTC).isoformat(), transition_approval_id),
+                        )
+                else:
+                    raise JiraWriteError(
+                        "JIRA transition outcome is uncertain; manual reconciliation required"
+                    )
+            if created_intent:
+                try:
+                    self.adapter.transition(intent["issue_key"], intent["transition_id"])
+                except JiraWriteError:
+                    with self.store.connection:
+                        self.store.connection.execute(
+                            "UPDATE jira_transition_outbox SET status='UNCERTAIN',updated_at=? "
+                            "WHERE approval_id=?",
+                            (datetime.now(UTC).isoformat(), transition_approval_id),
+                        )
+                    raise
+                with self.store.connection:
+                    self.store.connection.execute(
+                        "UPDATE jira_transition_outbox SET status='POST_SUCCEEDED',updated_at=? "
+                        "WHERE approval_id=?",
+                        (datetime.now(UTC).isoformat(), transition_approval_id),
+                    )
+                transitioned = True
         self.store.transition(run_id, RunState.SUCCEEDED, {"jira_comment_id": result.comment_id})
         return JiraReportResult(result.comment_id, result.issue_key, result.marker, transitioned)
 

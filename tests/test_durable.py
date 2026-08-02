@@ -115,6 +115,49 @@ def test_completed_replay_does_not_execute_handler_again(tmp_path) -> None:
     assert replay.result == first.result
 
 
+def test_durable_invocation_and_attempt_audit_precede_handler(tmp_path) -> None:
+    store = SQLiteRunStore(tmp_path / "runs.db")
+    create_run(store)
+
+    def inspect(_arguments, _context):
+        assert store.connection.execute("SELECT status FROM invocations").fetchone()[0] == "RUNNING"
+        audit = store.connection.execute(
+            "SELECT outcome,operation FROM audit_events ORDER BY timestamp DESC LIMIT 1"
+        ).fetchone()
+        assert tuple(audit) == ("attempt", "invoke")
+        raise RuntimeError("crash")
+
+    fixture = fixture_read_capability()
+    capability = type(fixture)(fixture.descriptor, inspect)
+    gateway = CapabilityGateway(
+        InMemoryCapabilityCatalog((capability,)),
+        StaticPolicyEngine(frozenset({"fixture.read"})),
+        DurableAuditSink(store),
+        InvocationContext("principal", "run", "NEW"),
+        store,
+    )
+    assert gateway.invoke("fixture.read", {"key": "x"}).status == ExecutionStatus.FAILED
+
+
+def test_transition_cas_rejects_stale_state_and_logs_attempt(tmp_path) -> None:
+    path = tmp_path / "runs.db"
+    first, second = SQLiteRunStore(path), SQLiteRunStore(path)
+    create_run(first)
+    stale = first.get_run("run")
+    second.transition("run", RunState.INTAKE)
+
+    original = first.get_run
+    first.get_run = lambda _run_id: stale  # type: ignore[method-assign]
+    with pytest.raises(InvalidTransition, match="changed"):
+        first.transition("run", RunState.INTAKE)
+    first.get_run = original  # type: ignore[method-assign]
+    assert first.get_run("run").state == RunState.INTAKE
+    row = first.connection.execute(
+        "SELECT committed,detail FROM transitions ORDER BY id DESC"
+    ).fetchone()
+    assert row["committed"] == 0 and "stale state" in row["detail"]
+
+
 def test_execution_lookup_is_run_scoped_and_preserves_capability(tmp_path) -> None:
     store = SQLiteRunStore(tmp_path / "runs.db")
     create_run(store, "one")

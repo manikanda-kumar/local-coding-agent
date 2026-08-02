@@ -85,6 +85,8 @@ def test_exact_report_body_persisted_before_post_and_terminal_after_post(tmp_pat
     store = reporting_store(tmp_path)
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path.endswith("/transitions"):
+            return httpx.Response(200, json={"transitions": [{"id": "31", "to": {"id": "done"}}]})
         if request.method == "GET":
             return httpx.Response(200, json={"comments": [], "total": 0})
         row = store.connection.execute("SELECT * FROM jira_report_outbox").fetchone()
@@ -186,9 +188,21 @@ def test_transition_is_unavailable_by_default_allowlisted_exact_and_single_use(t
     store, transitions = reporting_store(tmp_path), []
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path.endswith("/transitions"):
+            return httpx.Response(200, json={"transitions": [{"id": "31", "to": {"id": "done"}}]})
         if request.method == "GET":
             return httpx.Response(200, json={"comments": [], "total": 0})
         if request.url.path.endswith("/transitions"):
+            row = store.connection.execute(
+                "SELECT status FROM jira_transition_approvals WHERE approval_id=?", (approval,)
+            ).fetchone()
+            assert row["status"] == "CONSUMED"
+            assert (
+                store.connection.execute(
+                    "SELECT status FROM jira_transition_outbox WHERE approval_id=?", (approval,)
+                ).fetchone()["status"]
+                == "INTENT"
+            )
             transitions.append(json.loads(request.content)["transition"]["id"])
             return httpx.Response(204)
         return httpx.Response(201, json={"id": "66"})
@@ -213,10 +227,12 @@ def test_transition_is_unavailable_by_default_allowlisted_exact_and_single_use(t
         service.report("RUN-8", transition_approval_id=approval)
 
 
-def test_failed_transition_keeps_approval_and_run_resumable(tmp_path) -> None:
+def test_failed_transition_consumes_approval_but_keeps_durable_intent_resumable(tmp_path) -> None:
     store = reporting_store(tmp_path)
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path.endswith("/transitions"):
+            return httpx.Response(200, json={"transitions": [{"id": "31", "to": {"id": "done"}}]})
         if request.method == "GET":
             return httpx.Response(200, json={"comments": [], "total": 0})
         if request.url.path.endswith("/transitions"):
@@ -245,5 +261,83 @@ def test_failed_transition_keeps_approval_and_run_resumable(tmp_path) -> None:
         store.connection.execute(
             "SELECT status FROM jira_transition_approvals WHERE approval_id=?", (approval,)
         ).fetchone()[0]
-        == "APPROVED"
+        == "CONSUMED"
     )
+    assert (
+        store.connection.execute("SELECT status FROM jira_transition_outbox").fetchone()[0]
+        == "UNCERTAIN"
+    )
+
+
+def test_transition_timeout_after_remote_commit_reconciles_without_second_post(tmp_path) -> None:
+    store, posts, status = reporting_store(tmp_path), 0, "open"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal posts, status
+        if request.method == "GET" and request.url.path.endswith("/transitions"):
+            return httpx.Response(200, json={"transitions": [{"id": "31", "to": {"id": "done"}}]})
+        if request.method == "GET" and request.url.path.endswith("/issue/ABC-8"):
+            return httpx.Response(200, json={"fields": {"status": {"id": status}}})
+        if request.method == "GET":
+            return httpx.Response(200, json={"comments": [], "total": 0})
+        if request.url.path.endswith("/transitions"):
+            posts += 1
+            status = "done"
+            raise httpx.ReadTimeout("committed", request=request)
+        return httpx.Response(201, json={"id": "88"})
+
+    service = JiraReportingService(
+        store,
+        JiraWriteAdapter(
+            "https://jira.test",
+            JiraAuth("bearer", "secret"),
+            client=httpx.Client(transport=httpx.MockTransport(handler)),
+        ),
+        transition_ids={"31"},
+    )
+    approval = service.request_transition_approval(
+        "RUN-8", "31", approver="alice", expires_at=datetime.now(UTC) + timedelta(hours=1)
+    )
+    service.approve_transition(approval, approver="alice")
+    with pytest.raises(JiraWriteError):
+        service.report("RUN-8", transition_approval_id=approval)
+    assert not service.resume("RUN-8", transition_approval_id=approval).transitioned
+    assert posts == 1
+    assert store.get_run("RUN-8").state == RunState.SUCCEEDED
+
+
+def test_uncertain_transition_is_not_reposted_when_status_differs(tmp_path) -> None:
+    store, posts, status = reporting_store(tmp_path), 0, "open"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal posts
+        if request.method == "GET" and request.url.path.endswith("/transitions"):
+            return httpx.Response(200, json={"transitions": [{"id": "31", "to": {"id": "done"}}]})
+        if request.method == "GET" and request.url.path.endswith("/issue/ABC-8"):
+            return httpx.Response(200, json={"fields": {"status": {"id": status}}})
+        if request.method == "GET":
+            return httpx.Response(200, json={"comments": [], "total": 0})
+        if request.url.path.endswith("/transitions"):
+            posts += 1
+            raise httpx.ReadTimeout("uncertain", request=request)
+        return httpx.Response(201, json={"id": "89"})
+
+    service = JiraReportingService(
+        store,
+        JiraWriteAdapter(
+            "https://jira.test",
+            JiraAuth("bearer", "secret"),
+            client=httpx.Client(transport=httpx.MockTransport(handler)),
+        ),
+        transition_ids={"31"},
+    )
+    approval = service.request_transition_approval(
+        "RUN-8", "31", approver="alice", expires_at=datetime.now(UTC) + timedelta(hours=1)
+    )
+    service.approve_transition(approval, approver="alice")
+    with pytest.raises(JiraWriteError):
+        service.report("RUN-8", transition_approval_id=approval)
+    with pytest.raises(JiraWriteError, match="manual reconciliation"):
+        service.resume("RUN-8", transition_approval_id=approval)
+    assert posts == 1
+    assert store.get_run("RUN-8").state == RunState.REPORT

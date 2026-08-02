@@ -244,6 +244,12 @@ class SQLiteRunStore:
               approver TEXT NOT NULL, expires_at TEXT NOT NULL, binding_digest TEXT NOT NULL UNIQUE,
               status TEXT NOT NULL, created_at TEXT NOT NULL, approved_at TEXT, consumed_at TEXT
             );
+            CREATE TABLE IF NOT EXISTS jira_transition_outbox (
+              approval_id TEXT PRIMARY KEY REFERENCES jira_transition_approvals(approval_id),
+              run_id TEXT NOT NULL REFERENCES runs(run_id), issue_key TEXT NOT NULL,
+              transition_id TEXT NOT NULL, target_status TEXT NOT NULL, status TEXT NOT NULL,
+              created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS run_skill_pins (
               run_id TEXT PRIMARY KEY REFERENCES runs(run_id), skill_id TEXT NOT NULL,
               version TEXT NOT NULL, content_sha256 TEXT NOT NULL, signature BLOB NOT NULL,
@@ -370,17 +376,39 @@ class SQLiteRunStore:
                 )
             raise InvalidTransition(f"cannot transition {run.state} to {target}")
         with self.connection:
-            self.connection.execute(
-                "INSERT INTO transitions(run_id,from_state,to_state,attempted_at,committed,detail) "
-                "VALUES (?,?,?,?,?,?)",
-                (run_id, run.state, target, now, 1, None),
+            changed = self.connection.execute(
+                "UPDATE runs SET state=? WHERE run_id=? AND state=?",
+                (target, run_id, run.state),
             )
-            self.connection.execute("UPDATE runs SET state=? WHERE run_id=?", (target, run_id))
-            self.connection.execute(
-                "INSERT INTO checkpoints(run_id,state,model,policy_version,payload_json,created_at) "
-                "VALUES (?,?,?,?,?,?)",
-                (run_id, target, run.model, run.policy_version, _json(payload or {}), now),
-            )
+            if changed.rowcount != 1:
+                current = self.connection.execute(
+                    "SELECT state FROM runs WHERE run_id=?", (run_id,)
+                ).fetchone()
+                current_state = current[0] if current is not None else "missing"
+                self.connection.execute(
+                    "INSERT INTO transitions(run_id,from_state,to_state,attempted_at,committed,detail) "
+                    "VALUES (?,?,?,?,0,?)",
+                    (
+                        run_id,
+                        run.state,
+                        target,
+                        now,
+                        f"stale state; current state is {current_state}",
+                    ),
+                )
+            else:
+                self.connection.execute(
+                    "INSERT INTO transitions(run_id,from_state,to_state,attempted_at,committed,detail) "
+                    "VALUES (?,?,?,?,?,?)",
+                    (run_id, run.state, target, now, 1, None),
+                )
+                self.connection.execute(
+                    "INSERT INTO checkpoints(run_id,state,model,policy_version,payload_json,created_at) "
+                    "VALUES (?,?,?,?,?,?)",
+                    (run_id, target, run.model, run.policy_version, _json(payload or {}), now),
+                )
+        if changed.rowcount != 1:
+            raise InvalidTransition(f"run state changed from expected {run.state}")
 
     def checkpoint(self, run_id: str) -> sqlite3.Row:
         row = self.connection.execute(

@@ -51,7 +51,7 @@ def test_deny_by_default_hides_and_rechecks_guessed_capabilities() -> None:
     with pytest.raises(GatewayError, match="denied"):
         gateway.invoke("fixture.read", {"key": "x"})
 
-    assert [event.outcome for event in audit.events] == ["success", "denial", "denial"]
+    assert [event.outcome for event in audit.events] == ["denial", "success", "denial", "denial"]
     assert (
         StaticPolicyEngine(require_approval=frozenset({"fixture.read"})).decide(
             "fixture.read", gateway.context
@@ -110,6 +110,37 @@ def test_success_failure_status_and_invalid_operations_are_audited() -> None:
         "failure",
         "invalid_request",
     }
+
+
+def test_validation_execution_is_discoverable_and_callable_only_in_validate() -> None:
+    schema = {"type": "object", "properties": {}, "additionalProperties": False}
+    called = []
+    capability = Capability(
+        CapabilityDescriptor(
+            CapabilityCard("workspace.test.run", "Run trusted test", "validation test profile"),
+            schema,
+            Effect.TRUSTED_PROCESS_EXECUTION,
+        ),
+        lambda _arguments, _context: called.append(True) or {"passed": True},
+    )
+    catalog = InMemoryCapabilityCatalog((capability,))
+    policy = StaticPolicyEngine(frozenset({"workspace.test.run"}))
+    for stage in ("IMPLEMENT", "REPORT"):
+        gateway = CapabilityGateway(
+            catalog, policy, InMemoryAuditSink(), InvocationContext("p", "r", stage)
+        )
+        assert gateway.search("validation") == ()
+        with pytest.raises(GatewayError, match="VALIDATE"):
+            gateway.describe("workspace.test.run")
+        with pytest.raises(GatewayError, match="VALIDATE"):
+            gateway.invoke("workspace.test.run", {})
+    gateway = CapabilityGateway(
+        catalog, policy, InMemoryAuditSink(), InvocationContext("p", "r", "VALIDATE")
+    )
+    assert gateway.search("validation")[0].capability_id == "workspace.test.run"
+    assert gateway.describe("workspace.test.run").effect == Effect.TRUSTED_PROCESS_EXECUTION
+    assert gateway.invoke("workspace.test.run", {}).result == {"passed": True}
+    assert called == [True]
 
 
 def response(call_id, name, arguments):

@@ -1,5 +1,5 @@
-import os
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -19,6 +19,11 @@ from agent_runtime.validation import (
     BubblewrapSandboxBackend,
     SandboxLimits,
     ValidationProfile,
+    ValidationResult,
+)
+
+requires_bubblewrap = pytest.mark.skipif(
+    sys.platform != "linux", reason="Bubblewrap backend is Linux-only"
 )
 
 
@@ -36,6 +41,7 @@ def run_python(sandbox: BubblewrapSandboxBackend, workspace: Path, source: str):
     )
 
 
+@requires_bubblewrap
 def test_copy_is_disposable_environment_and_host_are_hidden(tmp_path: Path, monkeypatch):
     workspace = tmp_path / "generation"
     workspace.mkdir()
@@ -53,6 +59,7 @@ def test_copy_is_disposable_environment_and_host_are_hidden(tmp_path: Path, monk
     assert (workspace / "value").read_text() == "before"
 
 
+@requires_bubblewrap
 def test_network_namespace_has_no_interfaces_except_loopback(tmp_path: Path):
     workspace = tmp_path / "generation"
     workspace.mkdir()
@@ -62,6 +69,7 @@ def test_network_namespace_has_no_interfaces_except_loopback(tmp_path: Path):
     assert not result.passed
 
 
+@requires_bubblewrap
 def test_timeout_and_cancel(tmp_path: Path):
     workspace = tmp_path / "generation"
     workspace.mkdir()
@@ -89,6 +97,7 @@ def test_timeout_and_cancel(tmp_path: Path):
     assert not thread.is_alive() and output[0].cancelled
 
 
+@requires_bubblewrap
 def test_output_is_bounded_and_spilled(tmp_path: Path):
     workspace = tmp_path / "generation"
     workspace.mkdir()
@@ -99,7 +108,7 @@ def test_output_is_bounded_and_spilled(tmp_path: Path):
     assert result.stdout_truncated and result.output_artifact
 
 
-@pytest.mark.skipif(os.name != "posix", reason="Bubblewrap backend is Linux-only")
+@requires_bubblewrap
 def test_profile_is_argv_not_shell(tmp_path: Path):
     workspace = tmp_path / "generation"
     workspace.mkdir()
@@ -148,7 +157,16 @@ def coordinator_fixture(tmp_path: Path):
             "import pathlib,sys; sys.exit(pathlib.Path('value.txt').read_text() != 'good\\n')",
         ),
     )
-    service = ValidationService(manager, store, backend(tmp_path / "sandbox"), (profile,))
+
+    class DeterministicBackend:
+        def run(self, selected, generation, *, cancel=None):
+            del cancel
+            passed = (generation / "value.txt").read_text() == "good\n"
+            return ValidationResult(
+                selected.profile_id, passed, 0 if passed else 1, "", "", False, False
+            )
+
+    service = ValidationService(manager, store, DeterministicBackend(), (profile,))
     return store, manager, service
 
 

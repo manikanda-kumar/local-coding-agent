@@ -2,17 +2,17 @@
 
 ## Goal (incl. success criteria)
 
-- Review overall PLAN.md + implementation of this repo as a **coding agent harness purpose-built
-  for locally deployed models** (vLLM/SGLang, small/quantized, weaker tool-calling).
-- Success: multi-perspective review (sub-agents) producing concrete gaps, risks, and prioritized
-  recommendations — plan-level and code-level.
+- Remediate `review.md` in priority order and turn the governance chassis into an end-to-end coding
+  agent for locally hosted MiniMax-M2.7, Gemma-4-31B, GLM-5.2, and Kimi-K3.
+- Success: Tier 1 correctness/security defects closed; interleaved reasoning and local-model
+  profiles supported; intake-to-report orchestrator proven by realistic golden tasks.
 
 ## Constraints/Assumptions
 
-- Review only; no code changes unless asked.
-- Sub-agents requested explicitly by user.
-- Model routing per global CLAUDE.md: reviews → fable-5 / opus-4.8, plus gpt-5.5 (codex) as
-  independent perspective.
+- Preserve the deny-by-default gateway, exact approval bindings, sandbox boundary, and durable
+  replay/reconciliation guarantees while adding runnable product behavior.
+- No live JIRA/GitHub mutation without deployment credentials and explicit action approval.
+- Target large open-weight local models, not small 7B-class models.
 
 ## Key decisions
 
@@ -104,27 +104,21 @@
 
 ### Now
 
-- All 3 lenses complete + synthesized review delivered to user.
-- Two HIGH defects independently re-verified by me in source:
-  - `gateway.py:265-270` vs `gateway.py:118-119`: `workspace.test.run`/`workspace.lint.run` are
-    declared `TRUSTED_PROCESS_EXECUTION`, but the `workspace.` prefix guard only permits
-    workspace_read/write effects → both permanently denied; `gateway.py:274-276` VALIDATE stage
-    gate unreachable. Phase 6 gateway path dead. `Effect` is a `StrEnum` (`gateway.py:31`) so the
-    set membership test is not the bug — the prefix classification is.
-  - `reporting.py:328-337`: `adapter.transition()` runs BEFORE the approval row is marked
-    CONSUMED → timeout/crash between the two double-transitions the JIRA story on retry.
-    Comment path has an idempotency marker; transition path has none.
-
-- Full review written to `review.md` (10 sections: verdict, real modules, 2 HIGH defects,
-  6 MEDIUM, local-model readiness §5.1-5.10, missing orchestrator, test honesty, scope,
-  3-tier remediation order, open questions). Tracked by git — repo `.gitignore` has no *.md rule.
+- Tier 1 implementation complete and verified locally: gateway-mediated validation is stage-safe;
+  JIRA transitions use consume-before-send durable intent and conservative at-most-once recovery;
+  run-state transitions use CAS; invocation-attempt audit precedes handlers; coordinator tests no
+  longer depend on Bubblewrap off Linux.
+- JIRA recovery distinguishes confirmed POST success from target-state reconciliation. Existing
+  uncertain intents are never automatically re-posted when status differs; manual reconciliation
+  is required because JIRA provides no idempotency key.
+- Current verification: `100 passed, 1 skipped`; Ruff checks and diff check pass.
 
 ### Next
 
-- Awaiting user decision on remediation order. Recommended Tier 1: gateway effect classification,
-  reporting consume-before-transition, macOS skip predicate, durable transition guard.
-  Tier 2: reasoning round-trip through ChatMessage, wire ChatRequest.metadata, streaming +
-  per-model timeout, model profile registry. Freeze new governance work.
+- Commit Tier 1 as a reviewable milestone.
+- Tier 2: preserve reasoning/reasoning-details across assistant turns, expose safe request/profile
+  controls, remove false streaming advertisement, add model profiles and malformed-output hygiene.
+- Then build the missing intake → plan → implement → validate → publish → report orchestrator.
 
 ## Open questions
 
