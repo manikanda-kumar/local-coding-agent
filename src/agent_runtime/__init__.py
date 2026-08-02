@@ -7,6 +7,22 @@ from agent_runtime.errors import (
     ModelRoutingError,
     ToolArgumentsError,
 )
+from agent_runtime.gateway import (
+    AuditEvent,
+    Capability,
+    CapabilityCard,
+    CapabilityDescriptor,
+    CapabilityGateway,
+    ExecutionRecord,
+    ExecutionStatus,
+    GatewayError,
+    InMemoryAuditSink,
+    InMemoryCapabilityCatalog,
+    InvocationContext,
+    PolicyDecision,
+    StaticPolicyEngine,
+    fixture_read_capability,
+)
 from agent_runtime.models import (
     ChatMessage,
     ChatRequest,
@@ -18,22 +34,39 @@ from agent_runtime.models import (
     Usage,
 )
 from agent_runtime.routing import ModelDeployment, ModelRouter, RoutingRequirements
+from agent_runtime.runner import GATEWAY_TOOLS, AgentRunner
 
 __all__ = [
+    "GATEWAY_TOOLS",
+    "AgentRunner",
+    "AuditEvent",
+    "Capability",
+    "CapabilityCard",
+    "CapabilityDescriptor",
+    "CapabilityGateway",
     "ChatMessage",
     "ChatRequest",
     "ChatResponse",
+    "ExecutionRecord",
+    "ExecutionStatus",
+    "GatewayError",
+    "InMemoryAuditSink",
+    "InMemoryCapabilityCatalog",
     "IncompleteModelOutputError",
     "InvalidModelOutputError",
+    "InvocationContext",
     "ModelCapabilities",
     "ModelDeployment",
     "ModelOutputError",
     "ModelRouter",
     "ModelRoutingError",
+    "PolicyDecision",
     "RoutingRequirements",
+    "StaticPolicyEngine",
     "ToolArgumentsError",
     "ToolCall",
     "ToolDefinition",
     "ToolResult",
     "Usage",
+    "fixture_read_capability",
 ]

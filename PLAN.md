@@ -361,7 +361,7 @@ Acceptance criteria:
 - Routing cannot select a model without tool support for a tool-required stage.
 - Existing OpenRouter and MiniMax reasoning behavior remains covered.
 
-## Phase 1 — Read-only gateway walking skeleton `[>]`
+## Phase 1 — Read-only gateway walking skeleton `[x]`
 
 Goal: complete one model-to-gateway loop without external systems or write capabilities.
 
@@ -383,7 +383,7 @@ Acceptance criteria:
 - Model arguments cannot set identity, stage, workspace, policy, or idempotency keys.
 - The loop stops predictably at configured limits.
 
-## Phase 2 — Durable run kernel `[ ]`
+## Phase 2 — Durable run kernel `[>]`
 
 Goal: make execution resumable and auditable before enabling any write.
 
