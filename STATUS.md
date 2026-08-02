@@ -83,7 +83,7 @@ and verification-driven execution.
 
 ### Current verification baseline
 
-- `151 passed, 2 skipped` in the complete test suite.
+- `154 passed, 2 skipped` in the complete test suite.
 - Ruff lint and formatting checks pass.
 - The skipped tests are opt-in live JIRA and OpenRouter checks, not unit-test failures.
 
@@ -100,6 +100,10 @@ and verification-driven execution.
 
 ### Phase 12 — Budgeted context composer
 
+- Done: conservative profile-pinned context budgeting preserves the stable prompt prefix and
+  newest complete assistant/tool rounds while accounting for output reserve and gateway schemas.
+- Done: malformed, orphaned, or duplicate tool correlations and a minimum context that cannot fit
+  fail closed instead of sending an invalid model request.
 - Build a deterministic repository map and task-relevant context selector.
 - Inject only the continuity head, active task state, relevant repository evidence, and selected
   internal knowledge pages within a configured token budget.

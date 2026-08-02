@@ -5,6 +5,7 @@ from agent_runtime import (
     AgentRunner,
     CapabilityGateway,
     ChatResponse,
+    ContextBudget,
     InMemoryAuditSink,
     InMemoryCapabilityCatalog,
     InvocationContext,
@@ -38,6 +39,8 @@ def test_profile_bounds_and_freezes_allowlisted_extensions() -> None:
         ModelRequestProfile(0.1, 1024, 0.9, extensions={"model": "override"})
     with pytest.raises(ValueError, match="max_tokens"):
         ModelRequestProfile(0.1, 1.5, 0.9)
+    with pytest.raises(ValueError, match="context window"):
+        ModelRequestProfile(0.1, 1024, 0.9, context_window_tokens=1024)
 
 
 def test_runner_applies_profile_to_every_model_request() -> None:
@@ -71,3 +74,25 @@ def test_runner_applies_profile_to_every_model_request() -> None:
         300,
     )
     assert request.reasoning_mode == "structured"
+    with pytest.raises(ValueError, match="exceeds the model profile"):
+        AgentRunner(
+            provider,
+            "minimax",
+            gateway,
+            profile=profile,
+            context_budget=ContextBudget(
+                profile.context_window_tokens + 1,
+                profile.max_output_tokens,
+            ),
+        )
+    with pytest.raises(ValueError, match="exceeds the model profile"):
+        AgentRunner(
+            provider,
+            "minimax",
+            gateway,
+            profile=profile,
+            context_budget=ContextBudget(
+                profile.context_window_tokens,
+                profile.max_output_tokens - 1,
+            ),
+        )

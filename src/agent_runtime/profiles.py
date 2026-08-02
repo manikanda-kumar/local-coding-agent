@@ -44,6 +44,7 @@ class ModelRequestProfile:
     tool_parser: str | None = None
     reasoning_parser: str | None = None
     deployment_notes: str = ""
+    context_window_tokens: int = 131_072
 
     def __post_init__(self) -> None:
         extensions = validate_request_options(
@@ -59,13 +60,17 @@ class ModelRequestProfile:
             extensions=self.extensions,
         )
         if (
-            any(
+            not isinstance(self.context_window_tokens, int)
+            or isinstance(self.context_window_tokens, bool)
+            or self.context_window_tokens <= self.max_output_tokens
+            or self.context_window_tokens > 10_000_000
+            or any(
                 value is not None and (not isinstance(value, str) or not value or len(value) > 128)
                 for value in (self.tool_parser, self.reasoning_parser)
             )
             or len(self.deployment_notes) > 1024
         ):
-            raise ValueError("deployment metadata is invalid or unbounded")
+            raise ValueError("deployment metadata or context window is invalid or unbounded")
         object.__setattr__(self, "extensions", _freeze(extensions))
 
     def request_extensions(self) -> dict[str, Any]:
@@ -97,6 +102,7 @@ MODEL_PROFILES: Mapping[str, ModelRequestProfile] = MappingProxyType(
             tool_parser="minimax_m2",
             reasoning_parser="minimax_m2",
             deployment_notes="Current vLLM; older builds may require minimax_m2_append_think.",
+            context_window_tokens=131_072,
         ),
         "glm-5.2-vllm": ModelRequestProfile(
             1.0,
@@ -105,6 +111,7 @@ MODEL_PROFILES: Mapping[str, ModelRequestProfile] = MappingProxyType(
             extensions={"chat_template_kwargs": {"clear_thinking": False}},
             tool_parser="glm47",
             reasoning_parser="glm45",
+            context_window_tokens=131_072,
         ),
         "kimi-k3-vllm-agentic": ModelRequestProfile(
             1.0,
@@ -115,6 +122,7 @@ MODEL_PROFILES: Mapping[str, ModelRequestProfile] = MappingProxyType(
             tool_parser="kimi_k3",
             reasoning_parser="kimi_k3",
             deployment_notes="Vendor wire contract uses reasoning_content; current vLLM may expose reasoning.",
+            context_window_tokens=131_072,
         ),
         "gemma-4-31b-it-vllm": ModelRequestProfile(
             1.0,
@@ -125,6 +133,7 @@ MODEL_PROFILES: Mapping[str, ModelRequestProfile] = MappingProxyType(
             tool_parser="gemma4",
             reasoning_parser="gemma4",
             deployment_notes="Reasoning replay is supported only for tool continuation, not ordinary history.",
+            context_window_tokens=131_072,
         ),
     }
 )

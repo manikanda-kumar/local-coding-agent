@@ -119,12 +119,15 @@
 - Gateway-owned output normalization now preserves shape until byte sizing, recursively sanitizes
   structured and textual credentials, sanitizes MCP/validation artifacts before spill, persists a
   normalization version, and refuses legacy raw rows on replay.
-- Current verification: `151 passed, 2 skipped`; Ruff checks, format check, and diff check pass.
+- Prefix-cache-stable context budgeting uses conservative request accounting, model-profile
+  context/output bounds, immutable prompt prefixes, and newest complete assistant/tool groups;
+  malformed correlations and unfit minimum context fail closed. Independent review: SHIP.
+- Current verification: `154 passed, 2 skipped`; Ruff checks, format check, and diff check pass.
 
 ### Next
 
-- Commit executable golden/live checks and gateway output hardening as a reviewable milestone.
-- Add prefix-cache-stable context budgeting/compaction, then continuity ledger/context composer.
+- Commit prefix-cache-stable context budgeting as a reviewable milestone.
+- Build the deterministic continuity ledger and task-relevant repository context composer.
 - Run the checked-in live contract against the locally hosted vLLM endpoints when deployment URLs
   are supplied; no credentials or endpoints are committed.
 

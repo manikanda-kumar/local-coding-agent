@@ -101,7 +101,7 @@ from agent_runtime.repository import (
     RepositorySnapshotProvider,
 )
 from agent_runtime.routing import ModelDeployment, ModelRouter, RoutingRequirements
-from agent_runtime.runner import GATEWAY_TOOLS, AgentRunner
+from agent_runtime.runner import GATEWAY_TOOLS, AgentRunner, ContextBudget
 from agent_runtime.skills import (
     InternalSkillRegistry,
     RevocationMetadata,
@@ -154,6 +154,7 @@ __all__ = [
     "ChatResponse",
     "CodingAgentOutcome",
     "Comment",
+    "ContextBudget",
     "CoordinatorLimits",
     "DurableAuditSink",
     "Effect",

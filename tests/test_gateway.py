@@ -10,7 +10,9 @@ from agent_runtime import (
     CapabilityCard,
     CapabilityDescriptor,
     CapabilityGateway,
+    ChatMessage,
     ChatResponse,
+    ContextBudget,
     Effect,
     ExecutionStatus,
     GatewayError,
@@ -288,6 +290,91 @@ def test_runner_stops_at_turn_and_invocation_limits() -> None:
     )
     with pytest.raises(RuntimeError, match="invocation limit"):
         AgentRunner(ScriptedProvider(invokes), "model", gateway, max_invocations=1).run("loop")
+
+
+def test_context_budget_preserves_prefix_and_complete_newest_tool_rounds() -> None:
+    prefix = ChatMessage("user", "stable task prefix")
+    old_assistant = ChatMessage(
+        "assistant", "old", tool_calls=(ToolCall("old", "capability_search", '{"query":"old"}'),)
+    )
+    old_tool = ChatMessage("tool", "old-result-" + "x" * 100, tool_call_id="old")
+    new_assistant = ChatMessage(
+        "assistant", "new", tool_calls=(ToolCall("new", "capability_search", '{"query":"new"}'),)
+    )
+    new_tool = ChatMessage("tool", "new-result", tool_call_id="new")
+    newest = (prefix, new_assistant, new_tool)
+    measuring = ContextBudget(10_000, 0, chars_per_token=1, retain_groups=1)
+    budget = ContextBudget(
+        measuring._tokens(newest) + 1,
+        0,
+        chars_per_token=1,
+        retain_groups=1,
+    )
+    composed = budget.compose((prefix, old_assistant, old_tool, new_assistant, new_tool))
+    assert composed == newest
+    assert composed[0] is prefix
+    assert {message.tool_call_id for message in composed if message.role == "tool"} == {"new"}
+
+
+def test_context_budget_rejects_invalid_or_oversized_minimum_context() -> None:
+    with pytest.raises(ValueError, match="context budget"):
+        ContextBudget(10, 10)
+    budget = ContextBudget(100, 0, chars_per_token=1, retain_groups=1)
+    with pytest.raises(RuntimeError, match="newest complete tool rounds"):
+        budget.compose(
+            (
+                ChatMessage("user", "task"),
+                ChatMessage(
+                    "assistant",
+                    "x" * 200,
+                    tool_calls=(ToolCall("call", "capability_search", '{"query":"x"}'),),
+                ),
+                ChatMessage("tool", "result", tool_call_id="call"),
+            )
+        )
+    with pytest.raises(ValueError, match="complete round"):
+        ContextBudget(1_000, 0).compose(
+            (
+                ChatMessage("user", "task"),
+                ChatMessage(
+                    "assistant",
+                    "",
+                    tool_calls=(ToolCall("call", "capability_search", '{"query":"x"}'),),
+                ),
+                ChatMessage("tool", "result", tool_call_id="wrong"),
+            )
+        )
+    with pytest.raises(ValueError, match="complete round"):
+        ContextBudget(1_000, 0).compose(
+            (
+                ChatMessage("user", "task"),
+                ChatMessage(
+                    "assistant",
+                    "",
+                    tool_calls=(
+                        ToolCall("duplicate", "capability_search", '{"query":"a"}'),
+                        ToolCall("duplicate", "capability_search", '{"query":"b"}'),
+                    ),
+                ),
+                ChatMessage("tool", "a", tool_call_id="duplicate"),
+                ChatMessage("tool", "b", tool_call_id="duplicate"),
+            )
+        )
+
+
+def test_runner_counts_fixed_gateway_tools_with_the_configured_estimator() -> None:
+    gateway, _ = make_gateway()
+    measuring = ContextBudget(100_000, 0, chars_per_token=1, retain_groups=1)
+    probe = AgentRunner(ScriptedProvider(()), "model", gateway, context_budget=measuring)
+    prompt = (ChatMessage("user", "task"),)
+    constrained = ContextBudget(
+        measuring._tokens(prompt) + probe._fixed_tool_tokens - 1,
+        0,
+        chars_per_token=1,
+        retain_groups=1,
+    )
+    with pytest.raises(RuntimeError, match="context budget"):
+        AgentRunner(ScriptedProvider(()), "model", gateway, context_budget=constrained).run("task")
 
 
 def test_runner_audits_malformed_and_unsupported_gateway_calls() -> None:
