@@ -257,6 +257,29 @@ class SQLiteRunStore:
               version TEXT NOT NULL, content_sha256 TEXT NOT NULL, signature BLOB NOT NULL,
               signer_id TEXT NOT NULL, pinned_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS continuity_ledgers (
+              run_id TEXT PRIMARY KEY REFERENCES runs(run_id), revision INTEGER NOT NULL,
+              goal TEXT NOT NULL, constraints_json TEXT NOT NULL,
+              completed_json TEXT NOT NULL, next_json TEXT NOT NULL,
+              working_set_json TEXT NOT NULL, learnings_json TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS continuity_decisions (
+              run_id TEXT NOT NULL REFERENCES continuity_ledgers(run_id), sequence INTEGER NOT NULL,
+              decision TEXT NOT NULL, source TEXT NOT NULL, provenance TEXT NOT NULL,
+              created_at TEXT NOT NULL, PRIMARY KEY(run_id, sequence)
+            );
+            CREATE TABLE IF NOT EXISTS continuity_updates (
+              run_id TEXT NOT NULL REFERENCES continuity_ledgers(run_id), revision INTEGER NOT NULL,
+              update_json TEXT NOT NULL, created_at TEXT NOT NULL,
+              PRIMARY KEY(run_id, revision)
+            );
+            CREATE TRIGGER IF NOT EXISTS immutable_continuity_decision_update
+              BEFORE UPDATE ON continuity_decisions
+              BEGIN SELECT RAISE(ABORT, 'continuity decisions are immutable'); END;
+            CREATE TRIGGER IF NOT EXISTS immutable_continuity_decision_delete
+              BEFORE DELETE ON continuity_decisions
+              BEGIN SELECT RAISE(ABORT, 'continuity decisions are immutable'); END;
             """
         )
         invocation_columns = {

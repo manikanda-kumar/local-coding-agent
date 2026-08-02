@@ -37,6 +37,7 @@ class Effect(StrEnum):
     TRUSTED_WORKSPACE_READ = "trusted_workspace_read"
     TRUSTED_WORKSPACE_WRITE = "trusted_workspace_write"
     TRUSTED_PROCESS_EXECUTION = "trusted_process_execution"
+    TRUSTED_MEMORY_WRITE = "trusted_memory_write"
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,14 +121,19 @@ class InMemoryCapabilityCatalog:
             "git.diff.read": Effect.TRUSTED_WORKSPACE_READ,
             "workspace.test.run": Effect.TRUSTED_PROCESS_EXECUTION,
             "workspace.lint.run": Effect.TRUSTED_PROCESS_EXECUTION,
+            "continuity.memory.update": Effect.TRUSTED_MEMORY_WRITE,
         }
-        reserved = capability_id.startswith(("workspace.", "git.diff."))
+        reserved = (
+            capability_id.startswith(("workspace.", "git.diff."))
+            or capability_id == "continuity.memory.update"
+        )
         if reserved and reserved_effects.get(capability_id) != effect:
             raise ValueError("reserved workspace capability has invalid effect or identifier")
         if not reserved and effect in {
             Effect.TRUSTED_WORKSPACE_READ,
             Effect.TRUSTED_WORKSPACE_WRITE,
             Effect.TRUSTED_PROCESS_EXECUTION,
+            Effect.TRUSTED_MEMORY_WRITE,
         }:
             raise ValueError("workspace effect is reserved")
         if capability.descriptor.card.capability_id in self._capabilities:
@@ -290,8 +296,20 @@ def _validate(value: Any, schema: Mapping[str, Any], path: str = "arguments") ->
         for key in value.keys() & properties.keys():
             _validate(value[key], properties[key], f"{path}.{key}")
     if expected == "array" and "items" in schema:
+        if "maxItems" in schema and len(value) > schema["maxItems"]:
+            raise GatewayError("invalid_request", f"{path} has too many items")
         for index, item in enumerate(value):
             _validate(item, schema["items"], f"{path}[{index}]")
+    if expected == "string":
+        if "minLength" in schema and len(value) < schema["minLength"]:
+            raise GatewayError("invalid_request", f"{path} is too short")
+        if "maxLength" in schema and len(value) > schema["maxLength"]:
+            raise GatewayError("invalid_request", f"{path} is too long")
+    if expected in {"integer", "number"}:
+        if "minimum" in schema and value < schema["minimum"]:
+            raise GatewayError("invalid_request", f"{path} is below minimum")
+        if "maximum" in schema and value > schema["maximum"]:
+            raise GatewayError("invalid_request", f"{path} is above maximum")
 
 
 class CapabilityGateway:
@@ -377,6 +395,18 @@ class CapabilityGateway:
         if effect == Effect.TRUSTED_PROCESS_EXECUTION and self.context.stage != "VALIDATE":
             self._audit("denial", operation, capability_id=capability_id, detail="stage denied")
             raise GatewayError("denied", "validation execution requires VALIDATE stage")
+        if effect == Effect.TRUSTED_MEMORY_WRITE and self.context.stage not in {
+            "NEW",
+            "INTAKE",
+            "ANALYZE",
+            "PLAN_READY",
+            "IMPLEMENT",
+            "VALIDATE",
+        }:
+            self._audit("denial", operation, capability_id=capability_id, detail="stage denied")
+            raise GatewayError(
+                "denied", "continuity writes are denied in external or terminal stages"
+            )
         return capability
 
     def describe(self, capability_id: str) -> CapabilityDescriptor:
@@ -420,7 +450,8 @@ class CapabilityGateway:
                 if (
                     record.status == ExecutionStatus.FAILED
                     and record.error == "interrupted before terminal result"
-                    and capability.descriptor.effect == Effect.TRUSTED_WORKSPACE_WRITE
+                    and capability.descriptor.effect
+                    in {Effect.TRUSTED_WORKSPACE_WRITE, Effect.TRUSTED_MEMORY_WRITE}
                 ):
                     durable = self.store.restart_interrupted_invocation(record.invocation_id)
                     record.status = ExecutionStatus(durable.status)

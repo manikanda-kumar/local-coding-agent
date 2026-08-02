@@ -1,5 +1,11 @@
 """Provider-agnostic enterprise agent runtime."""
 
+from agent_runtime.continuity import (
+    ContinuityDecision,
+    ContinuityLedger,
+    ContinuityService,
+    continuity_memory_capability,
+)
 from agent_runtime.durable import (
     ArtifactStore,
     DurableAuditSink,
@@ -155,6 +161,9 @@ __all__ = [
     "CodingAgentOutcome",
     "Comment",
     "ContextBudget",
+    "ContinuityDecision",
+    "ContinuityLedger",
+    "ContinuityService",
     "CoordinatorLimits",
     "DurableAuditSink",
     "Effect",
@@ -248,6 +257,7 @@ __all__ = [
     "WorkspaceManager",
     "canonical_manifest",
     "canonical_schema_hash",
+    "continuity_memory_capability",
     "effective_capabilities",
     "emit_metric",
     "evaluate",

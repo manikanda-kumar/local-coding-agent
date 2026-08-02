@@ -83,7 +83,7 @@ and verification-driven execution.
 
 ### Current verification baseline
 
-- `154 passed, 2 skipped` in the complete test suite.
+- `161 passed, 2 skipped` in the complete test suite.
 - Ruff lint and formatting checks pass.
 - The skipped tests are opt-in live JIRA and OpenRouter checks, not unit-test failures.
 
@@ -91,12 +91,13 @@ and verification-driven execution.
 
 ### Phase 11 — Deterministic continuity ledger
 
-- Persist a compact run/session ledger containing goal, constraints, decisions, completed work,
-  next work, working set, and non-obvious learnings.
-- Capture relevant workflow and capability events deterministically rather than relying on model
-  prompt discipline.
-- Add a schema-validated memory-update capability that cannot grant authority or mutate policy.
-- Use atomic writes, bounded activity history, immutable decision provenance, and resume tests.
+- Done: compact revisioned per-run goal, constraints, immutable decisions/provenance, completed
+  work, next work, working set, and learnings persist in SQLite.
+- Done: bounded activity is derived from durable transitions and invocations, not model prose.
+- Done: `continuity.memory.update` can append only bounded non-authoritative fields and is
+  deny-by-default, stage-gated, durable-state checked, and crash/replay safe.
+- Done: atomic updates, immutable decision triggers, bounded history, exact reopen, stale-CAS, and
+  crash-window behavior are tested.
 
 ### Phase 12 — Budgeted context composer
 

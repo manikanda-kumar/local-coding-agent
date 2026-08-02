@@ -122,12 +122,15 @@
 - Prefix-cache-stable context budgeting uses conservative request accounting, model-profile
   context/output bounds, immutable prompt prefixes, and newest complete assistant/tool groups;
   malformed correlations and unfit minimum context fail closed. Independent review: SHIP.
-- Current verification: `154 passed, 2 skipped`; Ruff checks, format check, and diff check pass.
+- Deterministic continuity ledger persists bounded runtime-owned goals/constraints/decisions and
+  model-writable non-authoritative progress memory; durable-state CAS, immutable provenance,
+  bounded event activity, and interrupted-update replay are tested. Independent review: SHIP.
+- Current verification: `161 passed, 2 skipped`; Ruff checks, format check, and diff check pass.
 
 ### Next
 
-- Commit prefix-cache-stable context budgeting as a reviewable milestone.
-- Build the deterministic continuity ledger and task-relevant repository context composer.
+- Commit the deterministic continuity ledger as a reviewable milestone.
+- Build the task-relevant repository context composer and deterministic resume packet.
 - Run the checked-in live contract against the locally hosted vLLM endpoints when deployment URLs
   are supplied; no credentials or endpoints are committed.
 
