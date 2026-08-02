@@ -506,7 +506,7 @@ Acceptance criteria:
 - Timeout after remote creation reconciles to the existing pull request.
 - Base drift stops publication or requires explicit rebase and revalidation.
 
-## Phase 8 — JIRA reporting `[>]`
+## Phase 8 — JIRA reporting `[x]`
 
 Goal: report a successful run without duplicate or unsafe workflow mutations.
 
@@ -524,7 +524,7 @@ Acceptance criteria:
 - Reporting failure leaves the run resumable rather than falsely successful.
 - Failure reporting cannot transition a story to Done.
 
-## Phase 9 — Signed internal skills `[ ]`
+## Phase 9 — Signed internal skills `[>]`
 
 Goal: add reusable orchestration only after the code-owned workflow is proven.
 

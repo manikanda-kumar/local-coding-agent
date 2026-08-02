@@ -232,6 +232,18 @@ class SQLiteRunStore:
               branch TEXT NOT NULL, status TEXT NOT NULL, intent_json TEXT NOT NULL,
               remote_json TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS jira_report_outbox (
+              run_id TEXT PRIMARY KEY REFERENCES runs(run_id), issue_key TEXT NOT NULL,
+              marker TEXT NOT NULL UNIQUE, body TEXT NOT NULL, status TEXT NOT NULL,
+              remote_comment_id TEXT, result_json TEXT, created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS jira_transition_approvals (
+              approval_id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(run_id),
+              issue_key TEXT NOT NULL, transition_id TEXT NOT NULL, story_revision INTEGER NOT NULL,
+              approver TEXT NOT NULL, expires_at TEXT NOT NULL, binding_digest TEXT NOT NULL UNIQUE,
+              status TEXT NOT NULL, created_at TEXT NOT NULL, approved_at TEXT, consumed_at TEXT
+            );
             """
         )
 

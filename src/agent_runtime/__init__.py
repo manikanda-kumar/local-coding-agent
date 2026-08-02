@@ -74,6 +74,14 @@ from agent_runtime.publication import (
     PublicationResult,
     PublicationService,
 )
+from agent_runtime.reporting import (
+    JiraReportingService,
+    JiraReportResult,
+    JiraWriteAdapter,
+    JiraWriteError,
+    JiraWriteTimeout,
+    ReportingDenied,
+)
 from agent_runtime.repository import (
     RepositorySnapshot,
     RepositorySnapshotError,
@@ -138,6 +146,11 @@ __all__ = [
     "JiraAuth",
     "JiraReadAdapter",
     "JiraReadError",
+    "JiraReportResult",
+    "JiraReportingService",
+    "JiraWriteAdapter",
+    "JiraWriteError",
+    "JiraWriteTimeout",
     "MCPAllowlistAdapter",
     "MCPCredentials",
     "MCPFailure",
@@ -150,6 +163,7 @@ __all__ = [
     "PublicationDenied",
     "PublicationResult",
     "PublicationService",
+    "ReportingDenied",
     "RepositorySnapshot",
     "RepositorySnapshotError",
     "RepositorySnapshotProvider",
