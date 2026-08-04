@@ -4,6 +4,36 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
+plugin_repository="manikandakumar/personal-plugins"
+plugin_checkout="$HOME/.cache/amp/repositories/manikandakumar-personal-plugins"
+plugin_source="$plugin_checkout/.amp/plugins"
+plugin_directory="$HOME/.config/amp/plugins"
+
+echo "[setup] Installing personal Amp plugins"
+mkdir -p "$(dirname "$plugin_checkout")" "$plugin_directory"
+if [[ -d "$plugin_checkout/.git" ]]; then
+  git -C "$plugin_checkout" pull --ff-only
+else
+  amp clone "$plugin_repository" "$plugin_checkout"
+fi
+
+while IFS= read -r -d '' link; do
+  target="$(readlink "$link")"
+  if [[ "$target" == "$plugin_source/"* && ! -e "$link" ]]; then
+    rm -- "$link"
+  fi
+done < <(find "$plugin_directory" -maxdepth 1 -type l -print0)
+
+while IFS= read -r -d '' plugin; do
+  destination="$plugin_directory/$(basename "$plugin")"
+  if [[ (-e "$destination" || -L "$destination") &&
+        (! -L "$destination" || "$(readlink "$destination")" != "$plugin") ]]; then
+    echo "[setup] Refusing to replace existing plugin: $destination" >&2
+    exit 1
+  fi
+  ln -sfn -- "$plugin" "$destination"
+done < <(find "$plugin_source" -maxdepth 1 -type f \( -name '*.ts' -o -name '*.js' \) -print0)
+
 echo "[setup] Checking Python 3.11+"
 python3 - <<'PY'
 import sys

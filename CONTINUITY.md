@@ -6,6 +6,7 @@
   agent for locally hosted MiniMax-M2.7, Gemma-4-31B, GLM-5.2, and Kimi-K3.
 - Success: Tier 1 correctness/security defects closed; interleaved reasoning and local-model
   profiles supported; intake-to-report orchestrator proven by realistic golden tasks.
+- Ensure every fresh orb for this project installs the plugins from the user's personal Amp repo.
 
 ## Constraints/Assumptions
 
@@ -23,6 +24,9 @@
 
 ### Done
 
+- Fresh-orb setup now clones or fast-forwards `manikandakumar/personal-plugins`, links its three
+  plugins into `~/.config/amp/plugins`, rejects filename collisions, and removes stale managed
+  links. Two consecutive setup runs passed; all three plugins reloaded active in the current orb.
 - Read PLAN.md (15 phases, 0–10 marked complete; 11–15 pending), STATUS.md, file inventory.
 - Repo shape: ~3.6k LoC src in `src/agent_runtime/`, ~2.3k LoC tests, 15 test files.
   Claimed baseline `95 passed, 1 skipped`.
